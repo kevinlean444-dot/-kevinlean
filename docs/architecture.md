@@ -6,7 +6,7 @@ GTK 4 y Archiso no se utilizan todavía. No hay editor ni creador de notas.
 
 Los archivos alimentan documentos y texto FTS; los enlaces explícitos generan aristas.
 El manifiesto v2 mantiene registros y destinos de enlaces por UUID; SQLite contiene una vista derivada reemplazada
-mediante transacción. Guardar el manifiesto antes permite repetir una indexación fallida.
+mediante transacción. La publicación preparada y su marcador permiten terminar una actualización interrumpida.
 Eliminar solamente index.sqlite permite reconstruir documentos y relaciones con los
 mismos UUID. No hay descargas, ejecución de contenido ni detección semántica.
 
@@ -34,8 +34,24 @@ el grafo exporta versión 3. `needs_update` expone destinos mantenidos por histo
 se preservan el nodo y los backlinks pero nunca se reescriben enlaces originales.
 El recorrido completo evita que el orden de descubrimiento convierta copias en
 renombres. Sin nueva dependencia ni instalaciones. Solo se escribe bajo .trama.
-Próxima tarea pequeña: resolver explícitamente un conflicto histórico cuyo destino
-ya esté indexado, con validación y vista previa, sin editar manifiestos a mano.
+Incremento 3: reconciliation.py implementa conflicts y resolve (preview por defecto).
+La resolución explícita retira el UUID provisional, preserva el histórico, remapea
+fuentes y destinos y registra auditoría en resolutions. No modifica Markdown/TXT.
+index puede preparar toda su proyección en memoria sin persistirla; resolve usa
+ese mismo camino para mostrar el resultado que aplicará. core.publish prepara
+SQLite y manifiesto y usa un marcador pending para recuperación antes de leer.
+Esto reemplaza la escritura anterior de manifiesto antes de construir SQLite.
+La base se puede reconstruir preservando identidad, backlinks y conflictos resueltos.
+
+La publicación es recuperable entre reemplazos, no atómica para lectores externos
+ni segura ante escritores concurrentes. El espacio debe permanecer estable y con
+una sola operación activa. Este límite debe resolverse antes de permitir procesos
+GUI y CLI escribiendo a la vez.
+
+Próximo paso: diseñar el contrato de lectura para la ventana mínima de búsqueda y
+backlinks: errores estructurados, versiones, límites/paginación y needs_update.
+El núcleo ya permite diseñarlo sin implementar aún GTK. Antes de conectar una GUI
+que indexe simultáneamente se necesita bloqueo por espacio y tests de concurrencia.
 
 Roadmap posterior: núcleo fiable → ventana mínima de búsqueda/backlinks → integración
 Xfce → evaluación de distribución Arch. Sin promesas de rendimiento o compatibilidad.

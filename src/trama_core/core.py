@@ -1,4 +1,6 @@
 """Sin acceso a red ni ejecución de documentos; todas las rutas son locales."""
+import copy
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -30,11 +32,12 @@ def root_state(workspace, create=False):
         raise ValueError(".trama no puede ser un symlink")
     if create:
         state.mkdir(exist_ok=True)
-    for name in ("manifest.json", "index.sqlite", "index.sqlite-journal", "manifest.tmp"):
+    for name in ("manifest.json", "index.sqlite", "index.sqlite-journal", "manifest.tmp", "manifest.next.json", "index.next.sqlite", "index.next.sqlite-journal", "pending", "pending.tmp"):
         p = state / name
         if p.exists() or p.is_symlink():
             if p.is_symlink() or not p.is_file() or p.stat().st_nlink != 1:
                 raise ValueError(f"Archivo de estado inseguro: {name}")
+    recover(state)
     return root, state
 
 
@@ -68,10 +71,12 @@ def metadata(text, fallback):
     return identity, heading.group(1).strip() if heading else fallback
 
 
-def index(workspace, relocate=None):
+def index(workspace, relocate=None, *, _manifest=None, _prepare=False):
     root, state = root_state(workspace, True)
     manifest_path = state / "manifest.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {"version": 2, "documents": {}, "bindings": {}}
+    if _manifest is not None:
+        manifest = copy.deepcopy(_manifest)
     if manifest.get("version") == 1 and isinstance(manifest.get("paths"), dict):
         migrated = {}
         for path, identity in manifest["paths"].items():
@@ -230,27 +235,76 @@ def index(workspace, relocate=None):
                 new_bindings[key] = previous
             links.append((identity, raw, candidates[0] if len(candidates) == 1 else None, status, json.dumps(candidates), int(needs_update)))
     manifest["bindings"] = new_bindings
-    # Save identity and bindings first; database is a rebuildable projection.
-    temp = state / "manifest.tmp"
-    temp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-    temp.replace(manifest_path)
-    with sqlite3.connect(state / "index.sqlite") as db:
-        db.execute("BEGIN IMMEDIATE")
-        for table in ("docs", "search", "links", "errors", "conflicts"):
-            db.execute(f"DROP TABLE IF EXISTS {table}")
-        for statement in SCHEMA.split(";"):
-            if statement.strip():
-                db.execute(statement)
-        db.executemany("INSERT INTO docs VALUES (?,?,?,?,?,?)", [(*d, 0) for d in docs])
-        db.executemany("INSERT INTO docs VALUES (?,?,?,?,?,?)", [
-            (i, r["rel_path"], r.get("title", ""), r.get("content_hash"), r.get("kind", "note"), 1)
-            for i, r in records.items() if r.get("deleted") and i not in seen])
-        db.execute("PRAGMA user_version=3")
-        db.executemany("INSERT INTO search VALUES (?,?)", bodies.items())
-        db.executemany("INSERT INTO links VALUES (?,?,?,?,?,?)", links)
-        db.executemany("INSERT INTO errors VALUES (?,?)", errors)
-        db.executemany("INSERT INTO conflicts VALUES (?)", [(json.dumps(c, ensure_ascii=False),) for c in conflicts])
+    prepared = dict(manifest=manifest, docs=docs, bodies=bodies, links=links, errors=errors, conflicts=conflicts)
+    if _prepare:
+        return prepared
+    publish(state, prepared)
     return {"documents": len(docs), "links": len(links), "errors": [dict(path=p, error=e) for p, e in errors]}
+
+
+def recover(state):
+    """Finish an interrupted two-file publication before exposing state."""
+    marker = state / "pending"
+    if marker.exists():
+        for staged, target in (("index.next.sqlite", "index.sqlite"), ("manifest.next.json", "manifest.json")):
+            path = state / staged
+            if path.exists():
+                path.replace(state / target)
+        sync_directory(state)
+        marker.unlink()
+        sync_directory(state)
+
+
+def sync_directory(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def publish(state, prepared):
+    manifest, docs, bodies, links, errors, conflicts = (prepared[k] for k in
+        ("manifest", "docs", "bodies", "links", "errors", "conflicts"))
+    records = manifest["documents"]
+    seen = {d[0] for d in docs}
+    staged = state / "index.next.sqlite"
+    staged.unlink(missing_ok=True)
+    try:
+        with closing(sqlite3.connect(state / "index.next.sqlite")) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            for table in ("docs", "search", "links", "errors", "conflicts"):
+                db.execute(f"DROP TABLE IF EXISTS {table}")
+            for statement in SCHEMA.split(";"):
+                if statement.strip():
+                    db.execute(statement)
+            db.executemany("INSERT INTO docs VALUES (?,?,?,?,?,?)", [(*d, 0) for d in docs])
+            db.executemany("INSERT INTO docs VALUES (?,?,?,?,?,?)", [
+                (i, r["rel_path"], r.get("title", ""), r.get("content_hash"), r.get("kind", "note"), 1)
+                for i, r in records.items() if r.get("deleted") and i not in seen])
+            db.execute("PRAGMA user_version=3")
+            db.executemany("INSERT INTO search VALUES (?,?)", bodies.items())
+            db.executemany("INSERT INTO links VALUES (?,?,?,?,?,?)", links)
+            db.executemany("INSERT INTO errors VALUES (?,?)", errors)
+            db.executemany("INSERT INTO conflicts VALUES (?)", [(json.dumps(c, ensure_ascii=False),) for c in conflicts])
+        next_manifest = state / "manifest.next.json"
+        next_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        for path in (staged, next_manifest):
+            with path.open("rb") as stream:
+                os.fsync(stream.fileno())
+        marker = state / "pending.tmp"
+        marker.write_text("ready\n", encoding="ascii")
+        with marker.open("rb") as stream:
+            os.fsync(stream.fileno())
+        sync_directory(state)
+        marker.replace(state / "pending")
+        sync_directory(state)
+        recover(state)
+    finally:
+        # After intent publication leave staged files for recovery on the next command.
+        if not (state / "pending").exists():
+            for name in ("index.next.sqlite", "manifest.next.json", "pending.tmp"):
+                (state / name).unlink(missing_ok=True)
 
 
 def query(workspace, command, value=None):
@@ -258,7 +312,7 @@ def query(workspace, command, value=None):
     if not (state / "index.sqlite").is_file():
         raise ValueError("Primero ejecuta index")
     try:
-        with sqlite3.connect(f"{(state / 'index.sqlite').as_uri()}?mode=ro", uri=True) as db:
+        with closing(sqlite3.connect(f"{(state / 'index.sqlite').as_uri()}?mode=ro", uri=True)) as db:
             db.row_factory = sqlite3.Row
             if command == "search":
                 # Literal phrase: user input never becomes FTS operators.

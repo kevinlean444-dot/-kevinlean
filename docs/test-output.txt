@@ -21,8 +21,15 @@ test_explicit_relocate_with_edited_imported_note_cli (test_imported_rename.Impor
 test_hash_alone_never_transfers (test_imported_rename.ImportedRenameTests.test_hash_alone_never_transfers) ... ok
 test_imported_move_keeps_uuid_bytes_and_backlinks (test_imported_rename.ImportedRenameTests.test_imported_move_keeps_uuid_bytes_and_backlinks) ... ok
 test_invalid_relocate_preserves_state (test_imported_rename.ImportedRenameTests.test_invalid_relocate_preserves_state) ... ok
+test_ambiguous_preview_apply_and_rebuild (test_resolution.ResolutionTests.test_ambiguous_preview_apply_and_rebuild) ... ok
+test_coexisting_files_rejected_unchanged (test_resolution.ResolutionTests.test_coexisting_files_rejected_unchanged) ... ok
+test_database_build_failure_keeps_original_state (test_resolution.ResolutionTests.test_database_build_failure_keeps_original_state) ... ok
+test_edited_already_indexed_and_cli (test_resolution.ResolutionTests.test_edited_already_indexed_and_cli) ... ok
+test_interrupted_publication_recovers (test_resolution.ResolutionTests.test_interrupted_publication_recovers) ... ok
+test_missing_outside_symlink_and_canonical_rejected (test_resolution.ResolutionTests.test_missing_outside_symlink_and_canonical_rejected) ... ok
+test_stale_candidate_rejected (test_resolution.ResolutionTests.test_stale_candidate_rejected) ... ok
 
 ----------------------------------------------------------------------
-Ran 23 tests in 0.460s
+Ran 30 tests in 1.049s
 
 OK

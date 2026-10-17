@@ -45,8 +45,8 @@ estos metadatos antes del primer renombre automático. No se usa inode para reso
 ambigüedad de contenido. Inode puede reutilizarse: es una heurística conservadora,
 no prueba histórica; no se garantiza reconocer copia+borrado, cambios entre sistemas
 de archivos, renombre+edición sin UUID ni cambios concurrentes. En esos casos usar
-confirmación explícita antes de indexar. Confirmar destinos ya registrados o resolver
-conflictos históricos interactivamente queda pendiente, sin editar el manifiesto a mano.
+confirmación explícita antes de indexar. Para destinos ya registrados usar `resolve` con vista previa y aplicación explícita,
+como se documenta a continuación.
 
 `documents` mapea UUID → `{rel_path, content_hash, title, kind, deleted, size, device, inode, explicit_id, previous_paths}`.
 La ruta y el hash son atributos mutables; jamás se usan hashes para fusionar.
@@ -88,3 +88,67 @@ FTS5 usa unicode61 remove_diacritics=2: búsqueda por frase literal, sin operado
 aportados por usuario, insensible a mayúsculas y diacríticos latinos (cafe encuentra
 café). No promete normalización lingüística para todos los alfabetos. Graph exporta
 version=3, identity_conflicts, documents activos, deleted_documents, links y errors; candidates contiene IDs, target puede ser null.
+
+
+Incremento 3: inspección y resolución posterior a indexar
+
+```bash
+PYTHONPATH=src .venv/bin/python -m trama_core conflicts ESPACIO
+PYTHONPATH=src .venv/bin/python -m trama_core conflicts ESPACIO --json
+PYTHONPATH=src .venv/bin/python -m trama_core resolve ESPACIO OLD_UUID RUTA_O_UUID
+PYTHONPATH=src .venv/bin/python -m trama_core resolve ESPACIO OLD_UUID RUTA_O_UUID --preview
+PYTHONPATH=src .venv/bin/python -m trama_core resolve ESPACIO OLD_UUID RUTA_O_UUID --apply
+```
+
+`conflicts` ordena UUID históricos y candidatas por ruta/UUID. Incluye registros
+borrados y conflictos pendientes, hash anterior, todas las candidatas activas del
+mismo tipo sin ID canónico, sus UUID/hash, si coinciden por hash o figuraban en el
+conflicto, presencia de la ruta original, número de bindings históricos y de aristas
+entrantes actualmente indexadas. Las candidatas son opciones de inspección, no una
+propuesta de identidad; pueden tener contenido diferente. Metadatos son los del
+último index. La salida textual muestra la misma información principal; --json es
+la representación estructurada para herramientas.
+
+`resolve` no aplica por defecto; --preview y --dry-run son equivalentes. --apply
+es mutuamente excluyente con ambos. La vista previa incluye UUID superviviente y
+retirado, registros antes/después, cambios de documentos, bindings antes/después,
+enlaces retirados/añadidos con status y needs_update, errores de indexación y
+conflictos que se resuelven. No escribe un manifiesto ni una base de datos temporal.
+La aplicación recalcula y revalida el plan: no ejecuta una vista previa guardada.
+No cambiar el espacio entre comandos si se desea el mismo plan.
+
+La confirmación exige UUID histórico deleted, ruta antigua físicamente ausente
+(también rechaza symlinks), destino activo y legible dentro del espacio y sin ID
+canónico. El hash actual del destino debe coincidir con el indexado; de otro modo
+reindexar. También se rechazan documentos nuevos, editados, ausentes o ilegibles
+desde la última indexación en el resto del espacio: primero reindexar para que el
+plan no incorpore asignaciones inesperadas. Rechaza archivos coexistentes, rutas fuera del espacio, symlinks, tipos
+incompatibles, colisiones de UUID y bindings contradictorios. Un ID del front matter
+no se sobrescribe ni se absorbe.
+
+La operación copia atributos actuales bajo OLD_UUID y elimina CURRENT_UUID de
+`documents`; no queda un segundo nodo, ni siquiera como deleted. Remapea UUID tanto
+en fuentes como destinos de bindings y reconstruye todas las aristas. Los enlaces
+históricos recuperables quedan resolved con needs_update=1; los que apuntan a la
+ruta actual siguen resolved con needs_update=0. Un enlace ambiguo sigue ambiguo:
+no se fuerza una elección distinta de las reglas habituales. Las otras candidatas
+conservan sus identidades. Los conflictos cuyo id es OLD_UUID salen de `conflicts`
+y se archivan en `resolutions`: `{id, retired_id, old_path, rel_path,
+resolved_conflicts}`. Los registros de auditoría no son nodos consultables. El
+manifiesto sigue en versión 2 y SQLite/grafo en 3, sin migración nueva necesaria.
+
+Publicación recuperable del estado
+
+SQLite y JSON no comparten transacción. Se construyen primero `index.next.sqlite`
+(con transacción y cierre) y `manifest.next.json`; se sincronizan ambos. Un marcador
+`pending` publicado por reemplazo atómico expresa la intención de terminar. Luego
+se reemplazan SQLite y manifiesto y se retira el marcador, sincronizando el directorio.
+Antes del marcador, un fallo conserva el par anterior. Después del marcador, el
+siguiente comando completa ambos reemplazos pendientes antes de exponer estado.
+Se verifican symlinks/hardlinks de todos los archivos de estado, incluidos temporales.
+No borrar estos archivos manualmente durante recuperación. Esto ofrece recuperación
+ante interrupción entre reemplazos, no una transacción entre archivos para lectores
+externos que omitan la CLI. Tampoco ofrece bloqueo multiproceso: ejecutar una sola
+operación por espacio y no cambiar documentos concurrentemente. Una vista previa
+normal no escribe nada; si encuentra una aplicación previa interrumpida, primero
+termina esa recuperación pendiente, como cualquier otro comando.

@@ -4,14 +4,23 @@ import sqlite3
 import sys
 
 from .core import index, query
+from .reconciliation import conflicts, resolve
 
 
 def main():
     parser = argparse.ArgumentParser(description="Índice local de Trama")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("index", "search", "backlinks", "graph"):
+    for name in ("index", "search", "backlinks", "graph", "conflicts", "resolve"):
         p = sub.add_parser(name)
         p.add_argument("workspace", help="Directorio explícito del espacio")
+        if name == "conflicts":
+            p.add_argument("--json", action="store_true")
+        if name == "resolve":
+            p.add_argument("old_uuid")
+            p.add_argument("destination", help="UUID actual o ruta relativa indexada")
+            mode = p.add_mutually_exclusive_group()
+            mode.add_argument("--preview", "--dry-run", action="store_true")
+            mode.add_argument("--apply", action="store_true")
         if name == "index":
             p.add_argument("--relocate", nargs=2, metavar=("UUID", "RUTA"), help="Confirmar traslado de nota importada antes de indexar la nueva ruta")
         if name == "search":
@@ -20,8 +29,21 @@ def main():
             p.add_argument("target", help="Ruta relativa exacta o UUID")
     args = parser.parse_args()
     try:
-        result = index(args.workspace, relocate=args.relocate) if args.command == "index" else query(
-            args.workspace, args.command, getattr(args, "text", getattr(args, "target", None)))
+        if args.command == "resolve":
+            result = resolve(args.workspace, args.old_uuid, args.destination, apply=args.apply)
+        elif args.command == "conflicts":
+            result = conflicts(args.workspace)
+            if not args.json:
+                for row in result['orphans']:
+                    print(f"{row['id']} · {row['old_path']} · hash={row['content_hash']} · conflictos={len(row['pending_conflicts'])} · referencias históricas={row['historical_references']} · backlinks={row['indexed_backlinks']}")
+                    for candidate in row['candidates']:
+                        print(f"  {candidate['id']} · {candidate['rel_path']} · hash={candidate['content_hash']} · hash coincidente={candidate['hash_match']} · candidata registrada={candidate['recorded_candidate']}")
+                if not result['orphans']:
+                    print("Sin identidades históricas pendientes")
+                return 0
+        else:
+            result = index(args.workspace, relocate=args.relocate) if args.command == "index" else query(
+                args.workspace, args.command, getattr(args, "text", getattr(args, "target", None)))
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:

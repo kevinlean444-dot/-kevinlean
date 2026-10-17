@@ -47,3 +47,17 @@ se ha eliminado. El grafo v3 expone `needs_update` y `identity_conflicts`.
 
 Los enlaces previamente resueltos conservan destino por UUID si su ruta o título
 ya no resuelve. Los IDs duplicados se reportan en errors; no se fusionan documentos.
+
+
+Inspeccionar y resolver después de indexar:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m trama_core conflicts .demo/espacio --json
+PYTHONPATH=src .venv/bin/python -m trama_core resolve .demo/espacio OLD_UUID RUTA_ACTUAL --preview
+PYTHONPATH=src .venv/bin/python -m trama_core resolve .demo/espacio OLD_UUID RUTA_ACTUAL --apply
+```
+
+Ejemplo completo con datos nuevos, vista previa, aplicación y verificación de bytes:
+`.venv/bin/python docs/demo-resolution.py`. Crea `.demo/espacio/incremento3`;
+si ya existe, se detiene para preservar sus archivos. Nunca modifica notas existentes.
+Consultar docs/data-format.md para recuperación y límite de una operación por espacio.
