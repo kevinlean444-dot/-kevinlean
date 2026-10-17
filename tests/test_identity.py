@@ -68,18 +68,14 @@ class IdentityTests(unittest.TestCase):
         manifest = json.loads((self.root / '.trama/manifest.json').read_text())
         self.assertEqual(manifest['documents'][identity]['rel_path'], 'a.md')
 
-    def test_assignment_opt_in_and_idempotent(self):
+    def test_imported_frontmatter_remains_unchanged(self):
         self.write('a.md', '---\ntitle: Hola\n---\n# Hola\n')
         original = (self.root / 'a.md').read_bytes()
         index(self.root)
-        self.assertEqual((self.root / 'a.md').read_bytes(), original)
         identity = query(self.root, 'graph')['documents'][0]['id']
-        index(self.root, assign_ids=True)
-        data = (self.root / 'a.md').read_bytes()
-        self.assertIn(f'id: {identity}\n'.encode(), data)
-        self.assertEqual(uuid.UUID(identity).version, 4)
-        index(self.root, assign_ids=True)
-        self.assertEqual((self.root / 'a.md').read_bytes(), data)
+        index(self.root)
+        self.assertEqual((self.root / 'a.md').read_bytes(), original)
+        self.assertEqual(query(self.root, 'graph')['documents'][0]['id'], identity)
 
     def test_deletion_and_restore(self):
         identity = str(uuid.uuid4())
@@ -113,7 +109,7 @@ class IdentityTests(unittest.TestCase):
         original = f'---\r\nid: "{identity}"\r\n---\r\n# Nota\r\n'.encode()
         (self.root / 'a.md').write_bytes(original)
         self.write('bad.md', '---\nid: invalid\n---\n# Mala')
-        result = index(self.root, assign_ids=True)
+        result = index(self.root)
         self.assertEqual(result['documents'], 1)
         self.assertEqual(len(result['errors']), 1)
         self.assertEqual((self.root / 'a.md').read_bytes(), original)

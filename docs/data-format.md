@@ -10,14 +10,45 @@ comillas simples o dobles). Se valida el UUID; un ID inválido o de otra versió
 es error por archivo, nunca se reemplaza automáticamente. Se admite LF y CRLF.
 No hay parser YAML general: solo campo id escalar simple, una vez, sin comentarios.
 
-`index` no modifica documentos. `index --assign-ids` inserta un campo UUIDv4 en
-Markdown sin ID: reutiliza la identidad del manifiesto si existe y preserva el
-resto de bytes, front matter y permisos. Usa reemplazo atómico local y rechaza
-hardlinks y symlinks. Un fallo antes del reemplazo deja el original intacto.
-El espacio debe permanecer estable durante la operación. TXT y adjuntos mantienen
-identidad local sin escritura. Sin UUID embebido no se puede reconocer un traslado.
+`index` no modifica documentos bajo ninguna opción. `--assign-ids` y la función
+de escritura de UUID se han eliminado. Una nota importada, incluso con front matter
+sin id, conserva identidad exclusivamente en el manifiesto; nunca se inyecta contenido.
 
-`documents` mapea UUID → `{rel_path, content_hash, title, kind, deleted}`.
+Reconciliación automática al completar el recorrido:
+
+1. Notas con UUID explícito se reconocen por ese UUID, aunque cambie su contenido.
+2. Notas importadas en una ruta registrada conservan su UUID local.
+3. Para una ruta anterior desaparecida, se consideran solo archivos nuevos sin UUID
+   explícito y aún no registrados, del mismo tipo y hash. Debe haber una única
+   candidata y un único registro desaparecido candidato. Además deben coincidir
+   tamaño, dispositivo e inode previamente observados. Solo entonces se transfiere
+   el UUID. El hash solo delimita candidatas; no identifica ni fusiona entidades.
+4. Si la ruta anterior existe, una copia nueva recibe un UUID independiente.
+5. Si hay varias candidatas o varios registros desaparecidos compatibles, no se
+   transfiere ningún ID. Se registra error `Renombre ambiguo` y se asignan UUID nuevos
+   independientes. El registro anterior se conserva como deleted. `conflicts` guarda
+   el diagnóstico histórico `{id, old_path, candidates}` y graph lo exporta como
+   `identity_conflicts`, incluso al reindexar o reconstruir. Los errores del ciclo
+   se limpian en el siguiente index; el historial permanece.
+6. Un hash único sin evidencia de inode no permite decidir: se registra `Renombre no
+   confirmado`. Si se necesita confirmar manualmente, hacerlo antes de indexar la
+   nueva ruta mediante `index ESPACIO --relocate UUID RUTA_RELATIVA`. La ruta anterior
+   debe haber desaparecido y el destino ser legible, nuevo y sin ID explícito.
+   Esta declaración permite cambios de contenido y transfiere solo el UUID indicado;
+   no mueve ni escribe archivos. Una declaración inválida aborta antes de guardar
+   manifiesto o SQLite. Solo se admite una declaración por ejecución.
+
+Los campos adicionales del registro son `size`, `device`, `inode`, `explicit_id` y
+`previous_paths`. Son extensiones aditivas del manifiesto v2, no se cambia su versión.
+Un manifiesto antiguo necesita una indexación en la ubicación original para recoger
+estos metadatos antes del primer renombre automático. No se usa inode para resolver
+ambigüedad de contenido. Inode puede reutilizarse: es una heurística conservadora,
+no prueba histórica; no se garantiza reconocer copia+borrado, cambios entre sistemas
+de archivos, renombre+edición sin UUID ni cambios concurrentes. En esos casos usar
+confirmación explícita antes de indexar. Confirmar destinos ya registrados o resolver
+conflictos históricos interactivamente queda pendiente, sin editar el manifiesto a mano.
+
+`documents` mapea UUID → `{rel_path, content_hash, title, kind, deleted, size, device, inode, explicit_id, previous_paths}`.
 La ruta y el hash son atributos mutables; jamás se usan hashes para fusionar.
 Al reaparecer un UUID en otra ubicación se actualiza el mismo registro. Una ruta
 inexistente sin reubicación marca deleted; SQLite conserva la lápida con deleted=1.
@@ -28,7 +59,7 @@ el primero según recorrido ordenado, se excluye el segundo; resolver manualment
 Migración v1 → v2 automática durante indexación, manteniendo UUID por ruta. Una
 migración con varias rutas para el mismo UUID se rechaza antes de escribir estado,
 pues no permite distinguir traslado de colisión con seguridad. SQLite se reconstruye
-transaccionalmente con user_version=2; ejecutar index antes de consultar índices v1.
+transaccionalmente con user_version=3; ejecutar index antes de consultar índices antiguos.
 
 `bindings` guarda `[UUID fuente, texto del enlace]` serializado como clave → UUID
 destino. La resolución actual por ruta/título tiene prioridad. Si no hay destino
@@ -38,6 +69,10 @@ No se reutilizan bindings ante ambigüedad, enlaces externos o rutas inseguras.
 Quitar el enlace del documento elimina su binding. Un enlace que nunca se resolvió
 no obtiene destino por historial ni por coincidencia de contenido. Conservar el
 manifiesto permite reconstruir estos enlaces incluso después de mover documentos.
+Los enlaces resueltos por historial llevan `needs_update=1`: actualizar su texto
+manualmente; no se reescriben notas. Una resolución actual lleva needs_update=0.
+previous_paths conserva las rutas previas, pero no permite resolver enlaces nuevos
+a rutas antiguas automáticamente.
 
 Título: primer encabezado `#`, o nombre sin extensión. `[[Título]]` compara el título
 completo con casefold Unicode; no elimina acentos. Cero destinos: unresolved; varios:
@@ -52,4 +87,4 @@ Backlinks acepta UUID o ruta exacta; no el título ambiguo.
 FTS5 usa unicode61 remove_diacritics=2: búsqueda por frase literal, sin operadores
 aportados por usuario, insensible a mayúsculas y diacríticos latinos (cafe encuentra
 café). No promete normalización lingüística para todos los alfabetos. Graph exporta
-version=2, documents activos, deleted_documents, links y errors; candidates contiene IDs, target puede ser null.
+version=3, identity_conflicts, documents activos, deleted_documents, links y errors; candidates contiene IDs, target puede ser null.

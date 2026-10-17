@@ -1,0 +1,28 @@
+test_ambiguity_duplicates_unicode (test_core.CoreTests.test_ambiguity_duplicates_unicode) ... ok
+test_complete_cli_and_rebuild (test_core.CoreTests.test_complete_cli_and_rebuild) ... ok
+test_empty (test_core.CoreTests.test_empty) ... ok
+test_limits_utf8_and_duplicate_uuid (test_core.CoreTests.test_limits_utf8_and_duplicate_uuid) ... ok
+test_sql_and_fts_input_is_literal (test_core.CoreTests.test_sql_and_fts_input_is_literal) ... ok
+test_state_symlink_rejected (test_core.CoreTests.test_state_symlink_rejected) ... ok
+test_unreadable_external_symlink_and_escape (test_core.CoreTests.test_unreadable_external_symlink_and_escape) ... ok
+test_collision_controlled (test_identity.IdentityTests.test_collision_controlled) ... ok
+test_crlf_existing_id_and_invalid_id (test_identity.IdentityTests.test_crlf_existing_id_and_invalid_id) ... ok
+test_deletion_and_restore (test_identity.IdentityTests.test_deletion_and_restore) ... ok
+test_equal_content_distinct_documents (test_identity.IdentityTests.test_equal_content_distinct_documents) ... ok
+test_imported_frontmatter_remains_unchanged (test_identity.IdentityTests.test_imported_frontmatter_remains_unchanged) ... ok
+test_migrate_v1 (test_identity.IdentityTests.test_migrate_v1) ... ok
+test_move_and_content_change (test_identity.IdentityTests.test_move_and_content_change) ... ok
+test_removed_link_is_not_preserved (test_identity.IdentityTests.test_removed_link_is_not_preserved) ... ok
+test_rename_keeps_backlink_and_rebuild (test_identity.IdentityTests.test_rename_keeps_backlink_and_rebuild) ... ok
+test_ambiguous_rename_does_not_guess_even_with_same_inode (test_imported_rename.ImportedRenameTests.test_ambiguous_rename_does_not_guess_even_with_same_inode) ... ok
+test_assign_ids_removed_from_cli (test_imported_rename.ImportedRenameTests.test_assign_ids_removed_from_cli) ... ok
+test_existing_original_plus_copy_never_transfers (test_imported_rename.ImportedRenameTests.test_existing_original_plus_copy_never_transfers) ... ok
+test_explicit_relocate_with_edited_imported_note_cli (test_imported_rename.ImportedRenameTests.test_explicit_relocate_with_edited_imported_note_cli) ... ok
+test_hash_alone_never_transfers (test_imported_rename.ImportedRenameTests.test_hash_alone_never_transfers) ... ok
+test_imported_move_keeps_uuid_bytes_and_backlinks (test_imported_rename.ImportedRenameTests.test_imported_move_keeps_uuid_bytes_and_backlinks) ... ok
+test_invalid_relocate_preserves_state (test_imported_rename.ImportedRenameTests.test_invalid_relocate_preserves_state) ... ok
+
+----------------------------------------------------------------------
+Ran 23 tests in 0.460s
+
+OK

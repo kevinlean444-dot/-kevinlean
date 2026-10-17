@@ -20,10 +20,22 @@ secretos dentro de documentos normales. Elegir explícitamente un espacio de pru
 Markdown usa un subconjunto deliberado: enlaces de una línea sin paréntesis anidados;
 no es un parser CommonMark y puede reconocer sintaxis dentro de bloques de código.
 
-Identidad ante renombrados implementada para UUID embebido; hash nunca fusiona
-identidades. SQLite v2 incluye lápidas deleted. La generación de UUID en Markdown
-es explícita con --assign-ids; sin la opción se mantienen originales intactos.
-Próximo incremento: diagnóstico visible de enlaces mantenidos por historial y
-resolución asistida de colisiones. No reconciliar notas sin UUID por hash.
+Incremento 2: la indexación nunca escribe notas, ni con opciones. Se retiró
+--assign-ids. Los importados se reconcilian tras observar todo el espacio: ruta
+anterior ausente, correspondencia unívoca, mismo hash/tamaño/dispositivo/inode.
+Esto distingue renombre local de copia coexistente, sin usar el hash como identidad.
+La evidencia es heurística: no garantiza reconocer copia+borrado ni edición simultánea.
+--relocate UUID RUTA declara explícitamente un traslado importado antes de registrar
+el destino. Un UUID embebido sigue siendo canónico aunque cambie todo el contenido.
+
+Los conflictos quedan en el manifiesto y su proyección SQLite. Los metadatos
+adicionales son compatibles con v2; SQLite se reconstruye como user_version=3 y
+el grafo exporta versión 3. `needs_update` expone destinos mantenidos por historial;
+se preservan el nodo y los backlinks pero nunca se reescriben enlaces originales.
+El recorrido completo evita que el orden de descubrimiento convierta copias en
+renombres. Sin nueva dependencia ni instalaciones. Solo se escribe bajo .trama.
+Próxima tarea pequeña: resolver explícitamente un conflicto histórico cuyo destino
+ya esté indexado, con validación y vista previa, sin editar manifiestos a mano.
+
 Roadmap posterior: núcleo fiable → ventana mínima de búsqueda/backlinks → integración
 Xfce → evaluación de distribución Arch. Sin promesas de rendimiento o compatibilidad.
