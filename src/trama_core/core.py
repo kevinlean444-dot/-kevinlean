@@ -1,4 +1,6 @@
 """Sin acceso a red ni ejecución de documentos; todas las rutas son locales."""
+import copy
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -6,7 +8,6 @@ from pathlib import Path
 import re
 import sqlite3
 import stat
-import tempfile
 from urllib.parse import unquote, urlsplit
 import uuid
 
@@ -16,8 +17,9 @@ LINK = re.compile(r"\[\[([^\]\n]+)\]\]|!?\[[^\]\n]*\]\(([^)\n]+)\)")
 SCHEMA = """
 CREATE TABLE docs(id TEXT PRIMARY KEY, path TEXT, title TEXT, hash TEXT, kind TEXT, deleted INTEGER NOT NULL);
 CREATE VIRTUAL TABLE search USING fts5(id UNINDEXED, body, tokenize='unicode61 remove_diacritics 2');
-CREATE TABLE links(source TEXT, raw TEXT, target TEXT, status TEXT, candidates TEXT);
+CREATE TABLE links(source TEXT, raw TEXT, target TEXT, status TEXT, candidates TEXT, needs_update INTEGER NOT NULL);
 CREATE TABLE errors(path TEXT, error TEXT);
+CREATE TABLE conflicts(details TEXT NOT NULL);
 """
 
 
@@ -30,11 +32,12 @@ def root_state(workspace, create=False):
         raise ValueError(".trama no puede ser un symlink")
     if create:
         state.mkdir(exist_ok=True)
-    for name in ("manifest.json", "index.sqlite", "index.sqlite-journal", "manifest.tmp"):
+    for name in ("manifest.json", "index.sqlite", "index.sqlite-journal", "manifest.tmp", "manifest.next.json", "index.next.sqlite", "index.next.sqlite-journal", "pending", "pending.tmp"):
         p = state / name
         if p.exists() or p.is_symlink():
             if p.is_symlink() or not p.is_file() or p.stat().st_nlink != 1:
                 raise ValueError(f"Archivo de estado inseguro: {name}")
+    recover(state)
     return root, state
 
 
@@ -68,45 +71,12 @@ def metadata(text, fallback):
     return identity, heading.group(1).strip() if heading else fallback
 
 
-def assign_identity(path, data, identity):
-    """Opt-in; preserve bytes, permissions, and reject hardlinks/replacements."""
-    newline = b"\r\n" if data.startswith(b"---\r\n") else b"\n"
-    field = b"id: " + identity.encode("ascii") + newline
-    if data.startswith(b"---" + newline):
-        updated = b"---" + newline + field + data[3 + len(newline):]
-    else:
-        updated = b"---\n" + field + b"---\n" + data
-    if len(updated) > MAX_BYTES:
-        raise ValueError("UUID excedería el límite de tamaño")
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(fd, "rb") as stream:
-        info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            raise ValueError("No se asigna ID a archivos no regulares o hardlinks")
-        if stream.read(MAX_BYTES + 1) != data:
-            raise ValueError("Archivo cambió durante indexación")
-    temp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(prefix=".trama-id-", dir=path.parent, delete=False) as stream:
-            temp_path = Path(stream.name)
-            os.fchmod(stream.fileno(), stat.S_IMODE(info.st_mode))
-            stream.write(updated)
-            stream.flush()
-            os.fsync(stream.fileno())
-        current = path.lstat()
-        if (current.st_ino, current.st_dev, current.st_mtime_ns, current.st_size) != (info.st_ino, info.st_dev, info.st_mtime_ns, info.st_size):
-            raise ValueError("Archivo cambió durante asignación")
-        temp_path.replace(path)
-    finally:
-        if temp_path is not None:
-            temp_path.unlink(missing_ok=True)
-    return updated
-
-
-def index(workspace, assign_ids=False):
+def index(workspace, relocate=None, *, _manifest=None, _prepare=False):
     root, state = root_state(workspace, True)
     manifest_path = state / "manifest.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {"version": 2, "documents": {}, "bindings": {}}
+    if _manifest is not None:
+        manifest = copy.deepcopy(_manifest)
     if manifest.get("version") == 1 and isinstance(manifest.get("paths"), dict):
         migrated = {}
         for path, identity in manifest["paths"].items():
@@ -126,6 +96,8 @@ def index(workspace, assign_ids=False):
     identities = {r["rel_path"]: identity for identity, r in records.items() if not r.get("deleted")}
     bindings = manifest["bindings"]
     docs, bodies, errors, seen = [], {}, [], set()
+    observations = {}
+    explicit_ids = set()
     count = 0
     def walk_error(exc):
         errors.append((os.path.relpath(exc.filename, root), str(exc)))
@@ -153,23 +125,70 @@ def index(workspace, assign_ids=False):
                 explicit, title = metadata(body.replace("\r\n", "\n"), p.stem)
                 identity = explicit or identities.get(rel) or str(uuid.uuid4())
                 identity = str(uuid.UUID(identity))
-                if assign_ids and p.suffix.lower() == ".md" and explicit is None:
-                    if uuid.UUID(identity).version != 4:
-                        raise ValueError("ID previo no es UUIDv4")
-                    data = assign_identity(p, data, identity)
-                    body = data.decode("utf-8")
                 if identity in seen:
                     raise ValueError("UUID duplicado: conflicto, archivo excluido")
+                info = p.stat(follow_symlinks=False)
+                observations[rel] = dict(size=len(data), device=info.st_dev, inode=info.st_ino)
+                if explicit:
+                    explicit_ids.add(identity)
                 seen.add(identity)
                 docs.append((identity, rel, title, hashlib.sha256(data).hexdigest(), kind))
                 bodies[identity] = body
             except (OSError, ValueError) as exc:
                 errors.append((rel, str(exc)))
+    # Reconcile only after observing the entire space: copies cannot win by scan order.
+    missing = {i: r for i, r in records.items() if i not in seen
+               and not r.get("deleted") and not r.get("explicit_id")
+               and not (root / r["rel_path"]).exists()}
+    fresh = [d for d in docs if d[0] not in records and d[0] not in explicit_ids]
+    transfers = {}
+    conflicts = manifest.setdefault("conflicts", [])
+    for old_id, record in sorted(missing.items()):
+        candidates = [d for d in fresh if d[3] == record.get("content_hash")
+                      and d[4] == record.get("kind")]
+        peers = [i for i, r in missing.items() if r.get("content_hash") == record.get("content_hash")
+                 and r.get("kind") == record.get("kind")]
+        if len(candidates) > 1 or (candidates and len(peers) > 1):
+            conflict = dict(id=old_id, old_path=record["rel_path"],
+                            candidates=sorted(d[1] for d in candidates))
+            if conflict not in conflicts:
+                conflicts.append(conflict)
+            errors.append((record["rel_path"], "Renombre ambiguo: " + ", ".join(conflict["candidates"])))
+        elif len(candidates) == 1:
+            doc = candidates[0]
+            info = observations[doc[1]]
+            if all(record.get(k) == info[k] for k in ("size", "device", "inode")):
+                transfers[doc[0]] = old_id
+            else:
+                errors.append((record["rel_path"], "Renombre no confirmado; use --relocate UUID RUTA antes de indexar"))
+    if relocate:
+        old_id, new_path = relocate
+        if old_id not in missing:
+            raise ValueError("--relocate requiere UUID importado con ruta anterior desaparecida")
+        choices = [d for d in fresh if d[1] == new_path]
+        if len(choices) != 1:
+            raise ValueError("--relocate requiere ruta nueva, legible y sin UUID ni registro previo")
+        # Explicit evidence supplied by the user; never infer from a changed hash.
+        transfers = {new: old for new, old in transfers.items() if old != old_id}
+        transfers[choices[0][0]] = old_id
+    for n, doc in enumerate(docs):
+        old_id = transfers.get(doc[0])
+        if old_id:
+            bodies[old_id] = bodies.pop(doc[0])
+            seen.remove(doc[0])
+            seen.add(old_id)
+            docs[n] = (old_id, *doc[1:])
     for identity, record in records.items():
         location = root / record["rel_path"]
         record["deleted"] = not location.resolve().is_relative_to(root) or not location.exists()
     for identity, rel, title, digest, kind in docs:
-        records[identity] = dict(rel_path=rel, content_hash=digest, title=title, kind=kind, deleted=False)
+        prior = records.get(identity, {})
+        previous_paths = list(prior.get("previous_paths", []))
+        if prior.get("rel_path") and prior["rel_path"] != rel and prior["rel_path"] not in previous_paths:
+            previous_paths.append(prior["rel_path"])
+        records[identity] = dict(rel_path=rel, content_hash=digest, title=title, kind=kind,
+                                 deleted=False, explicit_id=identity in explicit_ids,
+                                 previous_paths=previous_paths, **observations[rel])
     by_path = {d[1]: d[0] for d in docs}
     titles = {}
     for identity, path, title, digest, kind in docs:
@@ -188,7 +207,7 @@ def index(workspace, assign_ids=False):
                 try:
                     parsed = urlsplit(raw)
                 except ValueError:
-                    links.append((identity, raw, None, "invalid", "[]"))
+                    links.append((identity, raw, None, "invalid", "[]", 0))
                     continue
                 if parsed.scheme or parsed.netloc:
                     status = "external"
@@ -207,34 +226,85 @@ def index(workspace, assign_ids=False):
                         status = "resolved" if candidates else "unresolved"
             key = json.dumps([identity, raw], ensure_ascii=False)
             previous = bindings.get(key)
-            if status == "unresolved" and previous in seen:
+            needs_update = status == "unresolved" and previous in seen
+            if needs_update:
                 candidates, status = [previous], "resolved"
             if status == "resolved":
                 new_bindings[key] = candidates[0]
             elif status == "unresolved" and previous in records:
                 new_bindings[key] = previous
-            links.append((identity, raw, candidates[0] if len(candidates) == 1 else None, status, json.dumps(candidates)))
+            links.append((identity, raw, candidates[0] if len(candidates) == 1 else None, status, json.dumps(candidates), int(needs_update)))
     manifest["bindings"] = new_bindings
-    # Save identity and bindings first; database is a rebuildable projection.
-    temp = state / "manifest.tmp"
-    temp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-    temp.replace(manifest_path)
-    with sqlite3.connect(state / "index.sqlite") as db:
-        db.execute("BEGIN IMMEDIATE")
-        for table in ("docs", "search", "links", "errors"):
-            db.execute(f"DROP TABLE IF EXISTS {table}")
-        for statement in SCHEMA.split(";"):
-            if statement.strip():
-                db.execute(statement)
-        db.executemany("INSERT INTO docs VALUES (?,?,?,?,?,?)", [(*d, 0) for d in docs])
-        db.executemany("INSERT INTO docs VALUES (?,?,?,?,?,?)", [
-            (i, r["rel_path"], r.get("title", ""), r.get("content_hash"), r.get("kind", "note"), 1)
-            for i, r in records.items() if r.get("deleted") and i not in seen])
-        db.execute("PRAGMA user_version=2")
-        db.executemany("INSERT INTO search VALUES (?,?)", bodies.items())
-        db.executemany("INSERT INTO links VALUES (?,?,?,?,?)", links)
-        db.executemany("INSERT INTO errors VALUES (?,?)", errors)
+    prepared = dict(manifest=manifest, docs=docs, bodies=bodies, links=links, errors=errors, conflicts=conflicts)
+    if _prepare:
+        return prepared
+    publish(state, prepared)
     return {"documents": len(docs), "links": len(links), "errors": [dict(path=p, error=e) for p, e in errors]}
+
+
+def recover(state):
+    """Finish an interrupted two-file publication before exposing state."""
+    marker = state / "pending"
+    if marker.exists():
+        for staged, target in (("index.next.sqlite", "index.sqlite"), ("manifest.next.json", "manifest.json")):
+            path = state / staged
+            if path.exists():
+                path.replace(state / target)
+        sync_directory(state)
+        marker.unlink()
+        sync_directory(state)
+
+
+def sync_directory(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def publish(state, prepared):
+    manifest, docs, bodies, links, errors, conflicts = (prepared[k] for k in
+        ("manifest", "docs", "bodies", "links", "errors", "conflicts"))
+    records = manifest["documents"]
+    seen = {d[0] for d in docs}
+    staged = state / "index.next.sqlite"
+    staged.unlink(missing_ok=True)
+    try:
+        with closing(sqlite3.connect(state / "index.next.sqlite")) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            for table in ("docs", "search", "links", "errors", "conflicts"):
+                db.execute(f"DROP TABLE IF EXISTS {table}")
+            for statement in SCHEMA.split(";"):
+                if statement.strip():
+                    db.execute(statement)
+            db.executemany("INSERT INTO docs VALUES (?,?,?,?,?,?)", [(*d, 0) for d in docs])
+            db.executemany("INSERT INTO docs VALUES (?,?,?,?,?,?)", [
+                (i, r["rel_path"], r.get("title", ""), r.get("content_hash"), r.get("kind", "note"), 1)
+                for i, r in records.items() if r.get("deleted") and i not in seen])
+            db.execute("PRAGMA user_version=3")
+            db.executemany("INSERT INTO search VALUES (?,?)", bodies.items())
+            db.executemany("INSERT INTO links VALUES (?,?,?,?,?,?)", links)
+            db.executemany("INSERT INTO errors VALUES (?,?)", errors)
+            db.executemany("INSERT INTO conflicts VALUES (?)", [(json.dumps(c, ensure_ascii=False),) for c in conflicts])
+        next_manifest = state / "manifest.next.json"
+        next_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        for path in (staged, next_manifest):
+            with path.open("rb") as stream:
+                os.fsync(stream.fileno())
+        marker = state / "pending.tmp"
+        marker.write_text("ready\n", encoding="ascii")
+        with marker.open("rb") as stream:
+            os.fsync(stream.fileno())
+        sync_directory(state)
+        marker.replace(state / "pending")
+        sync_directory(state)
+        recover(state)
+    finally:
+        # After intent publication leave staged files for recovery on the next command.
+        if not (state / "pending").exists():
+            for name in ("index.next.sqlite", "manifest.next.json", "pending.tmp"):
+                (state / name).unlink(missing_ok=True)
 
 
 def query(workspace, command, value=None):
@@ -242,7 +312,7 @@ def query(workspace, command, value=None):
     if not (state / "index.sqlite").is_file():
         raise ValueError("Primero ejecuta index")
     try:
-        with sqlite3.connect(f"{(state / 'index.sqlite').as_uri()}?mode=ro", uri=True) as db:
+        with closing(sqlite3.connect(f"{(state / 'index.sqlite').as_uri()}?mode=ro", uri=True)) as db:
             db.row_factory = sqlite3.Row
             if command == "search":
                 # Literal phrase: user input never becomes FTS operators.
@@ -250,7 +320,7 @@ def query(workspace, command, value=None):
                 return [dict(r) for r in db.execute("SELECT docs.* FROM search JOIN docs ON docs.id=search.id WHERE search MATCH ? ORDER BY path", (phrase,))]
             if command == "backlinks":
                 return [dict(r) for r in db.execute("SELECT DISTINCT d.* FROM links l JOIN docs d ON d.id=l.source JOIN docs t ON t.id=l.target WHERE (t.id=? OR t.path=?) AND t.deleted=0 AND d.deleted=0 ORDER BY d.path", (value, value))]
-            result = {"version": 2}
+            result = {"version": 3, "identity_conflicts": [json.loads(r[0]) for r in db.execute("SELECT details FROM conflicts ORDER BY details")]}
             for key, sql in (("documents", "SELECT * FROM docs WHERE deleted=0 ORDER BY path"), ("deleted_documents", "SELECT * FROM docs WHERE deleted=1 ORDER BY path,id"), ("links", "SELECT * FROM links ORDER BY source,raw"), ("errors", "SELECT * FROM errors ORDER BY path")):
                 result[key] = [dict(r) for r in db.execute(sql)]
             for link in result["links"]:

@@ -18,7 +18,7 @@ PYTHONPATH=src .venv/bin/python -m trama_core graph .demo/espacio
 ```
 
 La copia del ejemplo debe hacerse una sola vez; para repetir basta reindexar el mismo
-espacio. Todos los comandos requieren directorio explícito. Sin --assign-ids, index solo escribe
+espacio. Todos los comandos requieren directorio explícito. Index solo escribe
 `.trama/manifest.json` e `index.sqlite` dentro de ese directorio (y temporales de estado).
 Los errores por archivo aparecen en JSON, también en graph; revisar aunque index
 termine con éxito. Errores globales devuelven código 1.
@@ -33,11 +33,31 @@ Consulta [arquitectura](docs/architecture.md) y [formato](docs/data-format.md).
 El manifiesto conserva identidad; el índice permite búsqueda; las relaciones explícitas
 forman el grafo. Los traslados conservan identidad si hay UUID embebido. Consulta docs/data-format.md.
 
-Para preparar notas Markdown antes de moverlas (modifica solo las que no tienen ID):
+Los renombres importados se reconocen automáticamente solo con evidencia unívoca
+(hash, tamaño, dispositivo e inode; ruta anterior desaparecida). No se fusionan copias.
+Para confirmar un traslado con edición o entre sistemas de archivos, antes de indexar
+la ruta nueva, usa el UUID registrado y su nueva ruta relativa:
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m trama_core index .demo/espacio --assign-ids
+PYTHONPATH=src .venv/bin/python -m trama_core index .demo/espacio --relocate UUID RUTA_NUEVA
 ```
+
+Este comando solo actualiza estado; no mueve ni modifica documentos. `--assign-ids`
+se ha eliminado. El grafo v3 expone `needs_update` y `identity_conflicts`.
 
 Los enlaces previamente resueltos conservan destino por UUID si su ruta o título
 ya no resuelve. Los IDs duplicados se reportan en errors; no se fusionan documentos.
+
+
+Inspeccionar y resolver después de indexar:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m trama_core conflicts .demo/espacio --json
+PYTHONPATH=src .venv/bin/python -m trama_core resolve .demo/espacio OLD_UUID RUTA_ACTUAL --preview
+PYTHONPATH=src .venv/bin/python -m trama_core resolve .demo/espacio OLD_UUID RUTA_ACTUAL --apply
+```
+
+Ejemplo completo con datos nuevos, vista previa, aplicación y verificación de bytes:
+`.venv/bin/python docs/demo-resolution.py`. Crea `.demo/espacio/incremento3`;
+si ya existe, se detiene para preservar sus archivos. Nunca modifica notas existentes.
+Consultar docs/data-format.md para recuperación y límite de una operación por espacio.
