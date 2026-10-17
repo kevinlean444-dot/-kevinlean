@@ -1,0 +1,14 @@
+window.trama { background-color: #f3eadb; color: #35251b; }
+.trama headerbar { background-color: #e5d4bc; color: #35251b; }
+.trama label { color: #35251b; }
+.trama entry, .trama searchentry { background-color: #fffaf1; color: #35251b; border-radius: 10px; }
+.trama button { background: #eee0cc; color: #35251b; border: 1px solid #bb9d7e; border-radius: 8px; padding: 8px; }
+.trama button:hover { background: #dfc8aa; }
+.trama .paper { background-color: #fffaf1; padding: 12px; border-radius: 10px; }
+.trama .title { font-size: 24px; font-weight: bold; }
+.trama .section { font-size: 17px; font-weight: bold; }
+.trama .muted { color: #69533e; }
+.trama .warning { background-color: #f7e0ac; color: #67441d; padding: 8px; border-radius: 6px; }
+.trama .broken { background-color: #f4ddd3; color: #803c32; }
+.trama .ambiguous { background-color: #eadcea; color: #61415c; }
+.trama .statusbar { background-color: #e5d4bc; padding: 10px; }

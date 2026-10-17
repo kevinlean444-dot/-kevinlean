@@ -2,7 +2,8 @@
 
 Estado construido: CLI Python sin dependencias de ejecución externas, SQLite FTS5.
 Arch x86_64 y Xfce siguen siendo objetivos futuros; no son requisitos del núcleo.
-GTK 4 y Archiso no se utilizan todavía. No hay editor ni creador de notas.
+GTK 4 se usa en la ventana opcional de solo lectura; Archiso sigue aplazado.
+No hay editor ni creador de notas.
 
 Los archivos alimentan documentos y texto FTS; los enlaces explícitos generan aristas.
 El manifiesto v2 mantiene registros y destinos de enlaces por UUID; SQLite contiene una vista derivada reemplazada
@@ -60,9 +61,27 @@ fallos y desincronización en estados estructurados. docs/ui-contract.md es el c
 para GTK, TUI y scripts. La búsqueda usa bm25, snippets y paginación limitada, sin
 promesas de latencia ni lectura viva de ediciones aún no indexadas.
 
-Próximo paso: prototipo mínimo de frontend de solo lectura que consuma el contrato;
-evaluar GTK 4 disponible en el entorno objetivo o un fallback TUI sin dependencias.
-No construir servicios, ISO ni escrituras automáticas de notas en ese prototipo.
+Incremento 5: ui/ contiene Presenter compartido, terminal/snapshot y backend GTK 4
+opcional. Presenter consume solo ui_contract, guarda selección e historial por UUID;
+las vistas no abren SQLite ni documentos originales. GTK usa un worker secuencial,
+debounce y GLib.idle_add: los callbacks principales no llaman al contrato. Los
+tickets evitan representar respuestas de solicitudes anteriores. CSS local aplica
+la paleta beige/café con etiquetas explícitas de enlaces históricos, rotos y ambiguos.
+
+Gtk.Application/Window, Gtk.Paned, SearchEntry, resultados, inspector con pestañas
+y barra global funcionan bajo GTK real. ui --backend snapshot/tui comparte el
+controlador; gi solo se importa en la ruta GTK. La regla anterior que aplazaba GUI
+se reemplaza por la autorización explícita del usuario para este incremento de
+solo lectura. Las dependencias GTK son opcionales y del sistema; no se añadieron
+dependencias pip al núcleo. En este contenedor se extrajeron paquetes firmados a
+.runtime-gtk porque no había permisos de administración, y se usó Python 3.13 del
+sistema con system-site-packages para mantener compatible PyGObject.
+
+La prueba --smoke-test presenta widgets reales, hace búsqueda/selección y valida sus
+textos antes de cerrar GLib. No se implementan watcher, indexación automática ni
+escrituras desde GUI. docs/ui-window.md describe comandos, runtime y límites.
+Próximo paso: paginación visual y revisión de teclado/foco en un escritorio real,
+antes de añadir integración Xfce o funciones de escritura.
 
 Roadmap posterior: núcleo fiable → ventana mínima de búsqueda/backlinks → integración
 Xfce → evaluación de distribución Arch. Sin promesas de rendimiento o compatibilidad.

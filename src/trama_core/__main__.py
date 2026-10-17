@@ -38,8 +38,17 @@ def main():
     inspect_view = modes.add_parser("inspect")
     inspect_view.add_argument("document")
     modes.add_parser("status")
+    ui = sub.add_parser("ui", help="Ventana GTK 4 de solo lectura o terminal")
+    ui.add_argument("workspace")
+    ui.add_argument("--backend", choices=("auto", "gtk", "tui", "snapshot"), default="auto")
+    ui.add_argument("--query", default="")
+    ui.add_argument("--select")
+    ui.add_argument("--smoke-test", action="store_true")
     args = parser.parse_args()
     try:
+        if args.command == "ui":
+            from .ui.launcher import run
+            return run(args.workspace, backend=args.backend, query=args.query, select=args.select, smoke_test=args.smoke_test)
         if args.command == "ui-query":
             if args.view == "search":
                 result = ui_contract.search(args.workspace, args.text, limit=args.limit, offset=args.offset)

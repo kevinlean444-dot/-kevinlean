@@ -1,9 +1,11 @@
 # Trama · núcleo 0.1
 
-Prototipo local sin GUI ni privilegios. Python >=3.11 con sqlite3/FTS5.
+Prototipo local con CLI, TUI y ventana GTK 4 opcional de solo lectura.
+El núcleo usa Python >=3.11 con sqlite3/FTS5 y no requiere privilegios.
 La biblioteca estándar basta; no se necesita instalar el paquete para usar la CLI.
 
-Desde la raíz del repositorio, en Linux:
+Desde la raíz del repositorio, en Linux. Crear .venv solo si no existe; para GTK
+seguir primero docs/ui-window.md y usar el Python de la distribución:
 
 ```bash
 python3 -m venv .venv
@@ -23,7 +25,8 @@ espacio. Todos los comandos requieren directorio explícito. Index solo escribe
 Los errores por archivo aparecen en JSON, también en graph; revisar aunque index
 termine con éxito. Errores globales devuelven código 1.
 
-Entorno observado: Python 3.12.14, SQLite 3.53.1 con FTS5. No se requieren Arch ni Xfce.
+Entorno inicial del núcleo: Python 3.12.14, SQLite 3.53.1 con FTS5.
+Entorno gráfico verificado: Python 3.13.5, SQLite 3.46.1, GTK 4.18.6 y PyGObject 3.50.0. No se requieren Arch ni Xfce.
 Si venv o FTS5 faltan, detenerse e identificar el proveedor de Python del entorno;
 no instalar paquetes del sistema a ciegas. El proyecto no descarga dependencias.
 El backend setuptools del pyproject solo se necesita para empaquetar, no para este
@@ -76,3 +79,24 @@ Ver [contrato UI](docs/ui-contract.md). Los escritores toman flock exclusivo sin
 esperar; los lectores, compartido. La UI devuelve busy o recovery_needed de forma
 estructurada. El índice se actualiza a esquema 4 al reindexar; no lee documentos
 originales para servir fichas ni resultados.
+
+
+Ventana GTK 4 de solo lectura y alternativa de terminal (incremento 5):
+
+```bash
+PYTHONPATH=src .venv/bin/python -m trama_core ui .demo/espacio --backend gtk --query cafe --select Inicio.md
+PYTHONPATH=src .venv/bin/python -m trama_core ui .demo/espacio --backend snapshot --query cafe --select Inicio.md
+PYTHONPATH=src .venv/bin/python -m trama_core ui .demo/espacio --backend tui --query cafe
+```
+
+La ventana tiene búsqueda, inspector, backlinks navegables, Atrás y barra de estado
+con paleta beige/café. No escribe notas ni indexa automáticamente. GTK requiere
+PyGObject compatible con el Python del venv; terminal/snapshot no lo necesitan.
+Ver [dependencias Debian/Arch y prueba GTK real](docs/ui-window.md). En el contenedor
+actual se preparó Python 3.13.5 con GTK 4.18.6 local; el núcleo también conserva sus
+pruebas anteriores. Para la suite completa sin pantalla física:
+
+```bash
+. scripts/gtk-env.sh
+xvfb-run -a dbus-run-session -- env GTK_A11Y=none GSK_RENDERER=cairo G_DEBUG=fatal-warnings PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v
+```

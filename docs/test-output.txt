@@ -5,6 +5,7 @@ test_limits_utf8_and_duplicate_uuid (test_core.CoreTests.test_limits_utf8_and_du
 test_sql_and_fts_input_is_literal (test_core.CoreTests.test_sql_and_fts_input_is_literal) ... ok
 test_state_symlink_rejected (test_core.CoreTests.test_state_symlink_rejected) ... ok
 test_unreadable_external_symlink_and_escape (test_core.CoreTests.test_unreadable_external_symlink_and_escape) ... ok
+test_real_gtk_window_search_selection_and_widgets (test_gtk_window.GTKWindowTests.test_real_gtk_window_search_selection_and_widgets) ... ok
 test_collision_controlled (test_identity.IdentityTests.test_collision_controlled) ... ok
 test_crlf_existing_id_and_invalid_id (test_identity.IdentityTests.test_crlf_existing_id_and_invalid_id) ... ok
 test_deletion_and_restore (test_identity.IdentityTests.test_deletion_and_restore) ... ok
@@ -38,8 +39,12 @@ test_search_relevance_snippets_unicode_pagination_and_flags (test_ui_contract.UI
 test_shared_process_allows_read_but_not_write (test_ui_contract.UIContractTests.test_shared_process_allows_read_but_not_write) ... ok
 test_status_counts_and_health (test_ui_contract.UIContractTests.test_status_counts_and_health) ... ok
 test_ui_reports_recovery_needed_without_mutation (test_ui_contract.UIContractTests.test_ui_reports_recovery_needed_without_mutation) ... ok
+test_auto_falls_back_without_display_and_smoke_never_fakes_gtk (test_ui_presenter.PresenterTests.test_auto_falls_back_without_display_and_smoke_never_fakes_gtk) ... ok
+test_busy_recovery_and_not_found_without_writes (test_ui_presenter.PresenterTests.test_busy_recovery_and_not_found_without_writes) ... ok
+test_search_selection_navigation_back_and_immutability (test_ui_presenter.PresenterTests.test_search_selection_navigation_back_and_immutability) ... ok
+test_terminal_snapshot_and_tui_use_same_data (test_ui_presenter.PresenterTests.test_terminal_snapshot_and_tui_use_same_data) ... ok
 
 ----------------------------------------------------------------------
-Ran 40 tests in 1.141s
+Ran 45 tests in 1.856s
 
 OK

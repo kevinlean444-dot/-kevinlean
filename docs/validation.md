@@ -1,9 +1,19 @@
-# Validación del primer incremento
+# Registro de validación de Trama
 
-Ejecutada en el entorno cloud con Python 3.12.14 y SQLite 3.53.1 / FTS5.
-Comando: `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v`.
-Resultado del incremento 4: 40 pruebas ejecutadas, 40 correctas, sin omitidas.
-Las 30 del incremento anterior siguen pasando, sin modificar sus tests.
+Incremento 5: Python 3.13.5 del sistema, SQLite 3.46.1/FTS5, PyGObject 3.50.0,
+GTK 4.18.6 en Debian 13 amd64 bajo Xvfb. Se preservó el venv previo Python 3.12.14
+con el que se habían validado los incrementos 1–4 (SQLite 3.53.1).
+
+Comando real de la suite completa:
+
+```bash
+. scripts/gtk-env.sh
+xvfb-run -a dbus-run-session -- env GTK_A11Y=none GSK_RENDERER=cairo G_DEBUG=fatal-warnings PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v
+```
+
+Resultado: 45 pruebas ejecutadas, 45 correctas, sin omitidas. Las 40 anteriores
+siguen pasando sin cambios en sus archivos de test. Salida real: test-output.txt.
+
 Las 7 originales en test_core.py permanecen intactas. La antigua prueba de asignación
 en documento se sustituyó por una de inmutabilidad; los tests CRLF usan index sin
 opciones de escritura. --assign-ids debe ser rechazado por argparse antes de indexar.
@@ -31,8 +41,8 @@ sin errores de indexación. `search cafe` encontró Inicio.md; backlinks a
 `Ideas de estudio.md` devolvió Inicio.md. Exportación JSON en `.demo/graph.json`.
 La salida del ejemplo y el entorno virtual están ignorados por Git.
 
-No se ha probado empaquetado instalable, otras versiones de Python, Arch, interfaz
-gráfica, rendimiento ni sustitución concurrente maliciosa del espacio. El archivo
+No se ha probado empaquetado instalable, Arch/Xfce, rendimiento ni sustitución
+concurrente maliciosa del espacio. La interfaz GTK sí se probó bajo Xvfb en este incremento. El archivo
 sin lectura se comprueba por bits de modo además del error del sistema para que
 el caso sea reproducible incluso en ejecuciones con permisos elevados.
 
@@ -55,8 +65,8 @@ correctos, backlink recuperado desde referencia.md y hashes Markdown intactos.
 Salida guardada en `.demo/incremento3-output.txt` (ignorada por Git).
 
 Las pruebas de fallos inyectan excepciones controladas; no simulan cortes eléctricos
-reales ni certifican durabilidad de todos los sistemas de archivos. No se verificó
-concurrencia entre procesos, aún no soportada, ni integración con GTK.
+reales ni certifican durabilidad de todos los sistemas de archivos. En ese incremento no se verificó concurrencia ni GTK; las pruebas de los
+incrementos 4 y 5 siguientes cubren esos caminos.
 
 
 Incremento 4 — bloqueo por espacio y contrato UI
@@ -91,6 +101,30 @@ backlink desde Inicio.md, en líneas 2 y 3, y su enlace saliente. status devolvi
 Ese espacio incluye los subdirectorios de ejemplos previos; no equivale al fixture
 mínimo de 3 documentos que sigue validado por las pruebas automatizadas.
 
-La salida completa del último run está en test-output.txt. No se midió latencia ni
-se instaló/probó GTK, Arch/Xfce o sistemas de archivos remotos. flock es cooperativo;
+En el incremento 4 no se midió latencia ni se probó GTK, Arch/Xfce o sistemas
+de archivos remotos. El incremento 5 añade pruebas GTK reales. flock es cooperativo;
 editores y scripts externos que ignoren el bloqueo siguen fuera de garantías.
+
+
+Incremento 5 — presentador, GTK real y terminal
+
+- Cuatro pruebas nuevas de Presenter/TUI: búsqueda/selección, navegación desde
+  backlink y saliente resuelto, historial Atrás, bloqueo/error/recuperación,
+  snapshot inmutable, paridad entre vistas, salida terminal y fallback sin display.
+- Una prueba nueva de Gtk.Application real: abre el espacio de fixture, ejecuta
+  búsqueda, pulsa botón de resultado, comprueba ventana mapeada, título, UUID,
+  resultados, backlinks con Actualizar enlace y línea de origen, salientes rotos y
+  ambiguos y barra de estado. Se ejecuta en proceso separado con G_DEBUG=fatal-warnings
+  y PYTHONWARNINGS=error, exige stderr vacío y cierre limpio de GTK/GLib.
+- Los snapshots de bytes de Markdown/TXT, manifiesto y SQLite antes/después coinciden.
+  El test del controlador prohíbe read_document mediante mock: solo consume contrato.
+- Smoke manual bajo Xvfb sobre .demo/espacio: GTK [4,18,6], título Inicio, 1 resultado,
+  1 backlink, mapped=true, verified=true. No es una ventana simulada ni HTML.
+- Runtime descargado de APT con firmas/HTTPS conservadas; paquetes extraídos bajo
+  .runtime-gtk por falta de permisos de administración. No se ejecutó sudo ni se
+  instalaron paquetes globalmente. docs/ui-window.md lista dependencias y alternativas.
+
+La prueba GTK se omite explícitamente si se ejecuta sin display o gi; esa ejecución
+no demostraría la ventana. El comando Xvfb de este registro ejecutó las 45 sin
+omisiones. No se certifica Arch/Xfce real, HiDPI, tecnologías de asistencia ni
+rendimiento; la GUI no tiene todavía paginación visual, watcher ni editor.
