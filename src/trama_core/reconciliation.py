@@ -5,7 +5,8 @@ import json
 import os
 from pathlib import Path
 
-from .core import index, metadata, publish, query, read_document, root_state
+from .core import _index, metadata, publish, _query, read_document, root_state
+from .locking import space_lock
 
 
 def load(workspace):
@@ -14,7 +15,7 @@ def load(workspace):
     if manifest.get('version') != 2:
         raise ValueError('Ejecuta index para migrar el manifiesto primero')
     # Validate persisted paths/identities using the same rules as index, without saving.
-    observed = index(workspace, _manifest=manifest, _prepare=True)
+    observed = _index(workspace, _manifest=manifest, _prepare=True)
     return root, state, manifest, observed
 
 
@@ -31,9 +32,14 @@ def safe_path(root, relative):
 
 
 def conflicts(workspace):
+    with space_lock(workspace):
+        return _conflicts(workspace)
+
+
+def _conflicts(workspace):
     root, _, manifest, _ = load(workspace)
     records = manifest['documents']
-    graph = query(workspace, 'graph')
+    graph = _query(workspace, 'graph')
     rows = []
     for identity, record in sorted(records.items()):
         if not record.get('deleted') and not any(c['id'] == identity for c in manifest.get('conflicts', [])):
@@ -60,6 +66,11 @@ def conflicts(workspace):
 
 
 def resolve(workspace, old_id, destination, apply=False):
+    with space_lock(workspace, exclusive=apply):
+        return _resolve(workspace, old_id, destination, apply)
+
+
+def _resolve(workspace, old_id, destination, apply):
     root, state, original, observed = load(workspace)
     records = original['documents']
     if old_id not in records:
@@ -120,12 +131,12 @@ def resolve(workspace, old_id, destination, apply=False):
     manifest['conflicts'] = [c for c in manifest.get('conflicts', []) if c['id'] != old_id]
     manifest.setdefault('resolutions', []).append(dict(id=old_id, retired_id=current_id,
         old_path=old['rel_path'], rel_path=current['rel_path'], resolved_conflicts=resolved))
-    prepared = index(workspace, _manifest=manifest, _prepare=True)
+    prepared = _index(workspace, _manifest=manifest, _prepare=True)
     if not any(d[0] == old_id and d[1] == current['rel_path'] for d in prepared['docs']):
         raise ValueError('El destino no pudo adoptar el UUID histórico; revisa colisiones')
     if any('UUID duplicado' in error for _, error in prepared['errors']):
         raise ValueError('Hay una colisión de UUID; resuélvela antes de aplicar')
-    before = query(workspace, 'graph')['links']
+    before = _query(workspace, 'graph')['links']
     after = [dict(source=e[0], raw=e[1], target=e[2], status=e[3], candidates=json.loads(e[4]), needs_update=e[5]) for e in prepared['links']]
     def ordered(rows):
         return sorted(rows, key=lambda r: json.dumps(r, sort_keys=True))

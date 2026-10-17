@@ -5,6 +5,7 @@ import sys
 
 from .core import index, query
 from .reconciliation import conflicts, resolve
+from . import ui_contract
 
 
 def main():
@@ -27,8 +28,27 @@ def main():
             p.add_argument("text")
         if name == "backlinks":
             p.add_argument("target", help="Ruta relativa exacta o UUID")
+    view = sub.add_parser("ui-query", help="Contrato de lectura JSON v1")
+    view.add_argument("workspace")
+    modes = view.add_subparsers(dest="view", required=True)
+    search_view = modes.add_parser("search")
+    search_view.add_argument("text")
+    search_view.add_argument("--limit", type=int, default=20)
+    search_view.add_argument("--offset", type=int, default=0)
+    inspect_view = modes.add_parser("inspect")
+    inspect_view.add_argument("document")
+    modes.add_parser("status")
     args = parser.parse_args()
     try:
+        if args.command == "ui-query":
+            if args.view == "search":
+                result = ui_contract.search(args.workspace, args.text, limit=args.limit, offset=args.offset)
+            elif args.view == "inspect":
+                result = ui_contract.inspect_document(args.workspace, args.document)
+            else:
+                result = ui_contract.status(args.workspace)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result['ok'] else 1
         if args.command == "resolve":
             result = resolve(args.workspace, args.old_uuid, args.destination, apply=args.apply)
         elif args.command == "conflicts":

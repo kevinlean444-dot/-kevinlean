@@ -59,7 +59,7 @@ el primero según recorrido ordenado, se excluye el segundo; resolver manualment
 Migración v1 → v2 automática durante indexación, manteniendo UUID por ruta. Una
 migración con varias rutas para el mismo UUID se rechaza antes de escribir estado,
 pues no permite distinguir traslado de colisión con seguridad. SQLite se reconstruye
-transaccionalmente con user_version=3; ejecutar index antes de consultar índices antiguos.
+transaccionalmente con user_version=4; ejecutar index antes de consultar índices antiguos.
 
 `bindings` guarda `[UUID fuente, texto del enlace]` serializado como clave → UUID
 destino. La resolución actual por ruta/título tiene prioridad. Si no hay destino
@@ -135,7 +135,7 @@ no se fuerza una elección distinta de las reglas habituales. Las otras candidat
 conservan sus identidades. Los conflictos cuyo id es OLD_UUID salen de `conflicts`
 y se archivan en `resolutions`: `{id, retired_id, old_path, rel_path,
 resolved_conflicts}`. Los registros de auditoría no son nodos consultables. El
-manifiesto sigue en versión 2 y SQLite/grafo en 3, sin migración nueva necesaria.
+manifiesto sigue en versión 2 y SQLite en 4 y grafo en 3, sin migración nueva necesaria.
 
 Publicación recuperable del estado
 
@@ -148,7 +148,15 @@ siguiente comando completa ambos reemplazos pendientes antes de exponer estado.
 Se verifican symlinks/hardlinks de todos los archivos de estado, incluidos temporales.
 No borrar estos archivos manualmente durante recuperación. Esto ofrece recuperación
 ante interrupción entre reemplazos, no una transacción entre archivos para lectores
-externos que omitan la CLI. Tampoco ofrece bloqueo multiproceso: ejecutar una sola
-operación por espacio y no cambiar documentos concurrentemente. Una vista previa
+externos que omitan la CLI. El incremento 4 protege comandos públicos con flock por espacio (EX para escritores,
+SH para lectores), como se detalla en docs/ui-contract.md. No cambiar documentos
+externamente durante la indexación. Una vista previa
 normal no escribe nada; si encuentra una aplicación previa interrumpida, primero
 termina esa recuperación pendiente, como cualquier otro comando.
+
+
+Extensión del índice en incremento 4: SQLite user_version=4 incluye `metadata`
+(key/value con manifest_digest) y `link_locations` (position/line/context). El
+manifiesto permanece en v2, el grafo heredado en v3 y el nuevo contrato UI en v1.
+Reindexar actualiza índices anteriores sin modificar originales. El archivo .lock
+es estado de coordinación permanente, no parte del manifiesto ni de su huella.

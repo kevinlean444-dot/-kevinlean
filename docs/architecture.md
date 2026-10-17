@@ -29,7 +29,7 @@ La evidencia es heurística: no garantiza reconocer copia+borrado ni edición si
 el destino. Un UUID embebido sigue siendo canónico aunque cambie todo el contenido.
 
 Los conflictos quedan en el manifiesto y su proyección SQLite. Los metadatos
-adicionales son compatibles con v2; SQLite se reconstruye como user_version=3 y
+adicionales son compatibles con v2; SQLite se reconstruye como user_version=4 y
 el grafo exporta versión 3. `needs_update` expone destinos mantenidos por historial;
 se preservan el nodo y los backlinks pero nunca se reescriben enlaces originales.
 El recorrido completo evita que el orden de descubrimiento convierta copias en
@@ -43,15 +43,26 @@ SQLite y manifiesto y usa un marcador pending para recuperación antes de leer.
 Esto reemplaza la escritura anterior de manifiesto antes de construir SQLite.
 La base se puede reconstruir preservando identidad, backlinks y conflictos resueltos.
 
-La publicación es recuperable entre reemplazos, no atómica para lectores externos
-ni segura ante escritores concurrentes. El espacio debe permanecer estable y con
-una sola operación activa. Este límite debe resolverse antes de permitir procesos
-GUI y CLI escribiendo a la vez.
+La publicación es recuperable entre reemplazos. Incremento 4 añade bloqueo Linux
+flock por espacio: EX no bloqueante para index/resolve --apply; SH para lectores.
+La UI reporta pending como recovery_needed; lectores tradicionales recuperan bajo
+exclusión antes de servir datos. Las dos operaciones no pueden leer/escribir pares
+intermedios si usan las API públicas. Los helpers privados no son API para frontends.
+El bloqueo es advisory: editores externos y modificaciones manuales siguen fuera
+de garantías. .lock persiste vacío y nunca se elimina tras una operación.
 
-Próximo paso: diseñar el contrato de lectura para la ventana mínima de búsqueda y
-backlinks: errores estructurados, versiones, límites/paginación y needs_update.
-El núcleo ya permite diseñarlo sin implementar aún GTK. Antes de conectar una GUI
-que indexe simultáneamente se necesita bloqueo por espacio y tests de concurrencia.
+ui_contract.py expone search, inspect_document y status con envoltura JSON versión 1.
+No lee documentos para enriquecer respuestas. La indexación almacena posiciones y
+contextos de enlaces; SQLite 4 guarda además huella canónica del manifiesto. Índices
+antiguos requieren reindexar. El grafo heredado continúa en versión 3. La API UI usa
+SQLite read-only y una transacción por respuesta bajo bloqueo compartido; transforma
+fallos y desincronización en estados estructurados. docs/ui-contract.md es el contrato
+para GTK, TUI y scripts. La búsqueda usa bm25, snippets y paginación limitada, sin
+promesas de latencia ni lectura viva de ediciones aún no indexadas.
+
+Próximo paso: prototipo mínimo de frontend de solo lectura que consuma el contrato;
+evaluar GTK 4 disponible en el entorno objetivo o un fallback TUI sin dependencias.
+No construir servicios, ISO ni escrituras automáticas de notas en ese prototipo.
 
 Roadmap posterior: núcleo fiable → ventana mínima de búsqueda/backlinks → integración
 Xfce → evaluación de distribución Arch. Sin promesas de rendimiento o compatibilidad.

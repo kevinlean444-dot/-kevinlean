@@ -60,4 +60,19 @@ PYTHONPATH=src .venv/bin/python -m trama_core resolve .demo/espacio OLD_UUID RUT
 Ejemplo completo con datos nuevos, vista previa, aplicación y verificación de bytes:
 `.venv/bin/python docs/demo-resolution.py`. Crea `.demo/espacio/incremento3`;
 si ya existe, se detiene para preservar sus archivos. Nunca modifica notas existentes.
-Consultar docs/data-format.md para recuperación y límite de una operación por espacio.
+Consultar docs/data-format.md para recuperación y protocolo de bloqueo por espacio.
+
+
+Lectura para frontends, JSON v1, sin GTK:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m trama_core index .demo/espacio
+PYTHONPATH=src .venv/bin/python -m trama_core ui-query .demo/espacio search cafe --limit 20
+PYTHONPATH=src .venv/bin/python -m trama_core ui-query .demo/espacio inspect 'Ideas de estudio.md'
+PYTHONPATH=src .venv/bin/python -m trama_core ui-query .demo/espacio status
+```
+
+Ver [contrato UI](docs/ui-contract.md). Los escritores toman flock exclusivo sin
+esperar; los lectores, compartido. La UI devuelve busy o recovery_needed de forma
+estructurada. El índice se actualiza a esquema 4 al reindexar; no lee documentos
+originales para servir fichas ni resultados.

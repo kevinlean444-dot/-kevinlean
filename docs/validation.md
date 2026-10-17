@@ -2,8 +2,8 @@
 
 Ejecutada en el entorno cloud con Python 3.12.14 y SQLite 3.53.1 / FTS5.
 Comando: `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v`.
-Resultado del incremento 3: 30 pruebas ejecutadas, 30 correctas, sin omitidas.
-Las 23 del incremento anterior siguen pasando.
+Resultado del incremento 4: 40 pruebas ejecutadas, 40 correctas, sin omitidas.
+Las 30 del incremento anterior siguen pasando, sin modificar sus tests.
 Las 7 originales en test_core.py permanecen intactas. La antigua prueba de asignación
 en documento se sustituyó por una de inmutabilidad; los tests CRLF usan index sin
 opciones de escritura. --assign-ids debe ser rechazado por argparse antes de indexar.
@@ -57,3 +57,40 @@ Salida guardada en `.demo/incremento3-output.txt` (ignorada por Git).
 Las pruebas de fallos inyectan excepciones controladas; no simulan cortes eléctricos
 reales ni certifican durabilidad de todos los sistemas de archivos. No se verificó
 concurrencia entre procesos, aún no soportada, ni integración con GTK.
+
+
+Incremento 4 — bloqueo por espacio y contrato UI
+
+Comando ejecutado: `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v`.
+Diez pruebas nuevas en test_ui_contract.py, sin instalar paquetes:
+
+- Proceso hijo con EX: index y resolve --apply desde procesos independientes fallan
+  inmediatamente con mensaje Espacio ocupado; la UI devuelve busy. Manifiesto,
+  SQLite y documentos quedan idénticos. Tras liberar el bloqueo se puede indexar.
+- Proceso hijo con SH: una segunda lectura funciona, una escritura se rechaza.
+- Un bloqueo en un espacio no bloquea otro espacio independiente.
+- Inspector de nota renombrada y resuelta: backlinks históricos needs_update=true,
+  línea/contexto, enlace roto y ambiguo con UUID candidatas, todo en una respuesta.
+  Se prohíben lecturas de originales con mock y se comparan snapshots byte a byte.
+- Contadores exactos: 6 notas, 3 enlaces, 1 pendiente de actualización, 1 roto,
+  1 ambiguo, 1 conflicto y 1 error, con inspección de candidata y archivo inválido.
+- Búsqueda con relevancia, desempate estable, snippets Unicode, advertencias y
+  paginación; entrada de operadores se trata como frase literal.
+- Origen frontmatter y ficha de registro ilegible fuera de la proyección activa.
+- Índice ausente/antiguo/corrupto, manifiesto desincronizado/inválido y documento no
+  encontrado producen respuestas estructuradas. CLI usa stdout JSON y código 1.
+- Interrupción real simulada entre reemplazos: la UI devuelve recovery_needed sin
+  alterar nada; index recupera y devuelve el contrato a ready.
+- Symlink de .lock rechazado sin modificar el documento al que apunta.
+
+Prueba manual de CLI sobre el espacio existente .demo/espacio:
+index devolvió 9 documentos, 8 enlaces y cero errores; search cafe devolvió Inicio.md
+con snippet [café]; inspect de Ideas de estudio.md devolvió dos ocurrencias de
+backlink desde Inicio.md, en líneas 2 y 3, y su enlace saliente. status devolvió
+8 notas, 1 adjunto, 8 enlaces, 3 unresolved, 1 external, sin errores ni conflictos.
+Ese espacio incluye los subdirectorios de ejemplos previos; no equivale al fixture
+mínimo de 3 documentos que sigue validado por las pruebas automatizadas.
+
+La salida completa del último run está en test-output.txt. No se midió latencia ni
+se instaló/probó GTK, Arch/Xfce o sistemas de archivos remotos. flock es cooperativo;
+editores y scripts externos que ignoren el bloqueo siguen fuera de garantías.

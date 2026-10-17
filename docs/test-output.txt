@@ -28,8 +28,18 @@ test_edited_already_indexed_and_cli (test_resolution.ResolutionTests.test_edited
 test_interrupted_publication_recovers (test_resolution.ResolutionTests.test_interrupted_publication_recovers) ... ok
 test_missing_outside_symlink_and_canonical_rejected (test_resolution.ResolutionTests.test_missing_outside_symlink_and_canonical_rejected) ... ok
 test_stale_candidate_rejected (test_resolution.ResolutionTests.test_stale_candidate_rejected) ... ok
+test_exclusive_process_rejects_writers_and_ui (test_ui_contract.UIContractTests.test_exclusive_process_rejects_writers_and_ui) ... ok
+test_frontmatter_origin_and_unreadable_registered_document (test_ui_contract.UIContractTests.test_frontmatter_origin_and_unreadable_registered_document) ... ok
+test_inspector_contains_history_broken_ambiguous_and_positions (test_ui_contract.UIContractTests.test_inspector_contains_history_broken_ambiguous_and_positions) ... ok
+test_lock_symlink_rejected_without_document_mutation (test_ui_contract.UIContractTests.test_lock_symlink_rejected_without_document_mutation) ... ok
+test_locks_are_independent_between_spaces (test_ui_contract.UIContractTests.test_locks_are_independent_between_spaces) ... ok
+test_missing_stale_invalid_and_not_found_are_structured (test_ui_contract.UIContractTests.test_missing_stale_invalid_and_not_found_are_structured) ... ok
+test_search_relevance_snippets_unicode_pagination_and_flags (test_ui_contract.UIContractTests.test_search_relevance_snippets_unicode_pagination_and_flags) ... ok
+test_shared_process_allows_read_but_not_write (test_ui_contract.UIContractTests.test_shared_process_allows_read_but_not_write) ... ok
+test_status_counts_and_health (test_ui_contract.UIContractTests.test_status_counts_and_health) ... ok
+test_ui_reports_recovery_needed_without_mutation (test_ui_contract.UIContractTests.test_ui_reports_recovery_needed_without_mutation) ... ok
 
 ----------------------------------------------------------------------
-Ran 30 tests in 1.049s
+Ran 40 tests in 1.141s
 
 OK
