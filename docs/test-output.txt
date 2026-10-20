@@ -22,6 +22,12 @@ test_explicit_relocate_with_edited_imported_note_cli (test_imported_rename.Impor
 test_hash_alone_never_transfers (test_imported_rename.ImportedRenameTests.test_hash_alone_never_transfers) ... ok
 test_imported_move_keeps_uuid_bytes_and_backlinks (test_imported_rename.ImportedRenameTests.test_imported_move_keeps_uuid_bytes_and_backlinks) ... ok
 test_invalid_relocate_preserves_state (test_imported_rename.ImportedRenameTests.test_invalid_relocate_preserves_state) ... ok
+test_real_gtk_dense_inspector_refresh_reindex_and_editor_dry_run (test_inspector_actions.GTKInspectorActionTests.test_real_gtk_dense_inspector_refresh_reindex_and_editor_dry_run) ... ok
+test_contract_and_presenter_bound_both_link_pages (test_inspector_actions.InspectorActionTests.test_contract_and_presenter_bound_both_link_pages) ... ok
+test_external_editor_argv_dry_run_and_environment (test_inspector_actions.InspectorActionTests.test_external_editor_argv_dry_run_and_environment) ... ok
+test_external_editor_rejects_escape_missing_and_symlinks (test_inspector_actions.InspectorActionTests.test_external_editor_rejects_escape_missing_and_symlinks) ... ok
+test_file_changed_during_index_is_reported_instead_of_marked_current (test_inspector_actions.InspectorActionTests.test_file_changed_during_index_is_reported_instead_of_marked_current) ... ok
+test_modified_reload_and_explicit_reindex_with_lock (test_inspector_actions.InspectorActionTests.test_modified_reload_and_explicit_reindex_with_lock) ... ok
 test_ambiguous_preview_apply_and_rebuild (test_resolution.ResolutionTests.test_ambiguous_preview_apply_and_rebuild) ... ok
 test_coexisting_files_rejected_unchanged (test_resolution.ResolutionTests.test_coexisting_files_rejected_unchanged) ... ok
 test_database_build_failure_keeps_original_state (test_resolution.ResolutionTests.test_database_build_failure_keeps_original_state) ... ok
@@ -49,6 +55,6 @@ test_search_selection_navigation_back_and_immutability (test_ui_presenter.Presen
 test_terminal_snapshot_and_tui_use_same_data (test_ui_presenter.PresenterTests.test_terminal_snapshot_and_tui_use_same_data) ... ok
 
 ----------------------------------------------------------------------
-Ran 49 tests in 2.966s
+Ran 55 tests in 2.708s
 
 OK

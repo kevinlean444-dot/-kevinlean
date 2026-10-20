@@ -1,3 +1,4 @@
+from contextlib import closing
 import json
 import select
 import shutil
@@ -186,7 +187,7 @@ with space_lock(sys.argv[1], exclusive=sys.argv[2] == 'True'):
         self.assertEqual(ui.status(self.root)['state'], 'index_stale')
         manifest_path.write_bytes(original)
         self.assertEqual(ui.inspect_document(self.root, 'missing.md')['state'], 'not_found')
-        with sqlite3.connect(state / 'index.sqlite') as db:
+        with closing(sqlite3.connect(state / 'index.sqlite')) as db, db:
             db.execute('PRAGMA user_version=3')
         self.assertEqual(ui.status(self.root)['state'], 'index_stale')
         index(self.root)

@@ -1,6 +1,7 @@
-"""Contrato JSON v1, sin GTK ni lecturas de documentos originales."""
+"""Contrato JSON v1, sin GTK; contenido indexado y stat seguro de la nota seleccionada."""
 from contextlib import closing
 import json
+import stat
 from pathlib import Path
 import sqlite3
 
@@ -84,13 +85,13 @@ def _document(db, manifest, identity):
                 backlink_count=backlinks, has_conflicts=bool(_conflicts(manifest, identity)), needs_update_count=updates)
 
 
-def _link_rows(db, manifest, column, identity):
+def _link_rows(db, manifest, column, identity, limit, offset):
     # column is an internal constant, never caller-supplied SQL.
     sql = f'''SELECT l.*, l.rowid-1 AS position, p.line, p.context FROM links l
-              JOIN link_locations p ON p.position=l.rowid-1 WHERE l.{column}=? ORDER BY l.rowid'''
+              JOIN link_locations p ON p.position=l.rowid-1 WHERE l.{column}=? ORDER BY l.rowid LIMIT ? OFFSET ?'''
     records = manifest['documents']
     rows = []
-    for row in db.execute(sql, (identity,)):
+    for row in db.execute(sql, (identity, limit, offset)):
         rows.append(dict(position=row['position'], source=_brief(records[row['source']], row['source']),
                          target=None if row['target'] is None else _brief(records[row['target']], row['target']),
                          raw=row['raw'], status=row['status'], candidate_uuids=json.loads(row['candidates']),
@@ -118,10 +119,41 @@ def search(workspace, text, *, limit=20, offset=0):
     return _respond(workspace, 'search', perform)
 
 
-def inspect_document(workspace, document):
+def _disk_state(workspace, record):
+    root = Path(workspace).absolute()
+    path = root / record['rel_path']
+    try:
+        if not path.is_relative_to(root) or any(p.is_symlink() for p in (path, *path.parents) if p.is_relative_to(root)) or not path.resolve().is_relative_to(root):
+            return dict(state='unsafe', modified=None)
+        info = path.stat(follow_symlinks=False)
+        if not stat.S_ISREG(info.st_mode):
+            return dict(state='unsafe', modified=None)
+        if not info.st_mode & 0o444:
+            return dict(state='unreadable', modified=None)
+        changed = any(record.get(k) is not None and record[k] != value for k, value in
+                      (('size', info.st_size), ('device', info.st_dev), ('inode', info.st_ino), ('mtime_ns', info.st_mtime_ns)))
+        state = 'modified' if changed else 'current' if record.get('mtime_ns') is not None else 'unknown'
+        return dict(state=state, modified=changed if state != 'unknown' else None)
+    except FileNotFoundError:
+        return dict(state='missing', modified=None)
+    except OSError:
+        return dict(state='unreadable', modified=None)
+
+
+def _link_page(db, column, identity, limit, offset):
+    total = db.execute(f'SELECT count(*) FROM links WHERE {column}=?', (identity,)).fetchone()[0]
+    return dict(limit=limit, offset=offset, total=total,
+                next_offset=offset + limit if offset + limit < total else None)
+
+
+def inspect_document(workspace, document, *, link_limit=50, backlinks_offset=0, outgoing_offset=0):
     def perform(db, manifest):
         if not isinstance(document, str) or not document:
             raise ContractError('invalid_request', 'Indica UUID o ruta relativa', 'fix_request')
+        if type(link_limit) is not int or not 1 <= link_limit <= 100 or any(type(n) is not int or not 0 <= n <= 1000000 for n in (backlinks_offset, outgoing_offset)):
+            raise ContractError('invalid_request', 'link_limit 1..100; offsets 0..1000000', 'fix_request')
+        pages = dict(backlinks=dict(limit=link_limit, offset=backlinks_offset, total=0, next_offset=None),
+                     outgoing_links=dict(limit=link_limit, offset=outgoing_offset, total=0, next_offset=None))
         records = manifest['documents']
         if document in records:
             identity = document
@@ -134,13 +166,16 @@ def inspect_document(workspace, document):
             if not matches:
                 errors = [dict(r) for r in db.execute('SELECT * FROM errors WHERE path=? ORDER BY error', (document,))]
                 if errors:
-                    return dict(document=None, backlinks=[], outgoing_links=[], health=dict(errors=errors, conflicts=[], historical_reference_count=0))
+                    return dict(document=None, backlinks=[], outgoing_links=[], link_pages=pages, disk_state=None, health=dict(errors=errors, conflicts=[], historical_reference_count=0))
                 raise ContractError('not_found', 'Documento no registrado', 'choose_document')
             identity = matches[0]
         paths = {records[identity]['rel_path'], *records[identity].get('previous_paths', [])}
         errors = [dict(r) for r in db.execute('SELECT * FROM errors ORDER BY path,error') if r['path'] in paths]
-        return dict(document=_document(db, manifest, identity), backlinks=_link_rows(db, manifest, 'target', identity),
-                    outgoing_links=_link_rows(db, manifest, 'source', identity),
+        pages['backlinks'] = _link_page(db, 'target', identity, link_limit, backlinks_offset)
+        pages['outgoing_links'] = _link_page(db, 'source', identity, link_limit, outgoing_offset)
+        return dict(document=_document(db, manifest, identity), backlinks=_link_rows(db, manifest, 'target', identity, link_limit, backlinks_offset),
+                    outgoing_links=_link_rows(db, manifest, 'source', identity, link_limit, outgoing_offset),
+                    link_pages=pages, disk_state=_disk_state(workspace, records[identity]),
                     health=dict(errors=errors, conflicts=_conflicts(manifest, identity),
                                 historical_reference_count=sum(v == identity for v in manifest['bindings'].values())))
     return _respond(workspace, 'inspect', perform)

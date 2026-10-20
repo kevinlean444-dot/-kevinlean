@@ -20,6 +20,8 @@ SCHEMA = """
 CREATE TABLE docs(id TEXT PRIMARY KEY, path TEXT, title TEXT, hash TEXT, kind TEXT, deleted INTEGER NOT NULL);
 CREATE VIRTUAL TABLE search USING fts5(id UNINDEXED, body, tokenize='unicode61 remove_diacritics 2');
 CREATE TABLE links(source TEXT, raw TEXT, target TEXT, status TEXT, candidates TEXT, needs_update INTEGER NOT NULL);
+CREATE INDEX links_target ON links(target);
+CREATE INDEX links_source ON links(source);
 CREATE TABLE errors(path TEXT, error TEXT);
 CREATE TABLE conflicts(details TEXT NOT NULL);
 CREATE TABLE link_locations(position INTEGER PRIMARY KEY, line INTEGER, context TEXT);
@@ -129,7 +131,11 @@ def _index(workspace, relocate=None, *, _manifest=None, _prepare=False):
             p = Path(base) / name
             rel = p.relative_to(root).as_posix()
             try:
+                before = p.stat(follow_symlinks=False)
                 data = read_document(p)
+                info = p.stat(follow_symlinks=False)
+                if any(getattr(before, key) != getattr(info, key) for key in ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns')) or info.st_size != len(data):
+                    raise ValueError('Archivo cambió durante indexación; vuelve a indexar cuando termine de guardarse')
                 kind = "note" if p.suffix.lower() in (".md", ".txt") else "attachment"
                 body = data.decode("utf-8") if kind == "note" else ""
                 explicit, title = metadata(body.replace("\r\n", "\n"), p.stem)
@@ -137,8 +143,7 @@ def _index(workspace, relocate=None, *, _manifest=None, _prepare=False):
                 identity = str(uuid.UUID(identity))
                 if identity in seen:
                     raise ValueError("UUID duplicado: conflicto, archivo excluido")
-                info = p.stat(follow_symlinks=False)
-                observations[rel] = dict(size=len(data), device=info.st_dev, inode=info.st_ino)
+                observations[rel] = dict(size=len(data), device=info.st_dev, inode=info.st_ino, mtime_ns=info.st_mtime_ns)
                 if explicit:
                     explicit_ids.add(identity)
                 seen.add(identity)

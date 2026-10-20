@@ -1,3 +1,4 @@
+from contextlib import closing
 import hashlib
 import json
 import shutil
@@ -33,7 +34,7 @@ class ImportedRenameTests(unittest.TestCase):
         self.assertEqual((self.root / 'sub/new.md').read_bytes(), original)
         self.assertEqual((self.root / 'source.md').read_bytes(), source)
         self.assertEqual(query(self.root, 'backlinks', identity)[0]['path'], 'source.md')
-        with sqlite3.connect(self.root / '.trama/index.sqlite') as db:
+        with closing(sqlite3.connect(self.root / '.trama/index.sqlite')) as db, db:
             self.assertEqual(db.execute('select path from docs where id=?', (identity,)).fetchone()[0], 'sub/new.md')
         graph = query(self.root, 'graph')
         self.assertTrue(all(e['needs_update'] == 1 for e in graph['links']))

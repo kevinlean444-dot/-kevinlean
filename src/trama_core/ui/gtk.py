@@ -8,7 +8,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Gdk', '4.0')
 from gi.repository import Gdk, Gio, GLib, Gtk
 
-from . import FOCUS_ORDER, Presenter, link_text, notices, status_text, page_text
+from . import FOCUS_ORDER, Presenter, link_text, notices, status_text, page_text, link_page_text
 
 
 def available():
@@ -38,11 +38,11 @@ def scroller(child):
 
 
 class Window(Gtk.ApplicationWindow):
-    def __init__(self, application, workspace, query='', select=None, *, page_size=50):
+    def __init__(self, application, workspace, query='', select=None, *, page_size=50, link_page_size=50, editor=None, editor_dry_run=False):
         super().__init__(application=application, title='Trama · Lectura local')
         self.set_default_size(1120, 760)
         self.add_css_class('trama')
-        self.controller = Presenter(workspace, page_size=page_size)
+        self.controller = Presenter(workspace, page_size=page_size, link_page_size=link_page_size, editor=editor, editor_dry_run=editor_dry_run)
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='trama-reader')
         self.closed = False
         self.pending = 0
@@ -73,6 +73,13 @@ class Window(Gtk.ApplicationWindow):
         refresh.connect('clicked', lambda _: self.submit('refresh'))
         header.pack_end(refresh)
         self.refresh_button = refresh
+        self.reindex_button = Gtk.Button(label='Reindexar')
+        self.reindex_button.set_tooltip_text('Actualizar índice y manifiesto sin escribir notas · Ctrl+Shift+R')
+        self.reindex_button.connect('clicked', lambda _: self.submit('reindex'))
+        header.pack_end(self.reindex_button)
+        self.open_button = Gtk.Button(label='Abrir editor', sensitive=False)
+        self.open_button.connect('clicked', lambda _: self.submit('open_external'))
+        header.pack_end(self.open_button)
         self.set_titlebar(header)
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.banner = label(css='warning')
@@ -117,10 +124,27 @@ class Window(Gtk.ApplicationWindow):
         self.backlinks_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.outgoing_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.health_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        for box, title in ((self.backlinks_box, 'Backlinks'), (self.outgoing_box, 'Enlaces salientes'), (self.health_box, 'Avisos')):
+        self.link_controls = {}
+        self.inspector_panels = {}
+        for section, box, title in (('backlinks', self.backlinks_box, 'Backlinks'), ('outgoing_links', self.outgoing_box, 'Enlaces salientes'), ('health', self.health_box, 'Avisos')):
             box.add_css_class('paper')
             box.set_focusable(True)
-            notebook.append_page(scroller(box), Gtk.Label(label=title))
+            panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            self.inspector_panels[section] = panel
+            if section != 'health':
+                controls = Gtk.Box(spacing=6)
+                count = label('Sin enlaces', css='muted')
+                controls.append(count)
+                prev = Gtk.Button(label='Anterior', sensitive=False)
+                nxt = Gtk.Button(label='Siguiente', sensitive=False)
+                prev.connect('clicked', lambda _, d=section: self.submit('change_link_page', d, -1))
+                nxt.connect('clicked', lambda _, d=section: self.submit('change_link_page', d, 1))
+                controls.append(prev)
+                controls.append(nxt)
+                panel.append(controls)
+                self.link_controls[section] = dict(count=count, previous=prev, next=nxt)
+            panel.append(scroller(box))
+            notebook.append_page(panel, Gtk.Label(label=title))
         right.append(notebook)
         paned.set_end_child(right)
         root.append(paned)
@@ -138,7 +162,7 @@ class Window(Gtk.ApplicationWindow):
             return
         self.ticket += 1
         job = [operation, args, kwargs, self.ticket]
-        if (self.jobs and self.jobs[-1][0] == operation and operation in ('search', 'set_focus', 'move_result', 'move_link')
+        if (self.jobs and self.jobs[-1][0] == operation and operation in ('search', 'set_focus', 'move_result', 'move_link', 'refresh', 'reindex')
                 and (operation != 'move_link' or self.jobs[-1][1][0] == args[0])):
             previous = self.jobs[-1]
             if operation == 'move_result':
@@ -190,7 +214,7 @@ class Window(Gtk.ApplicationWindow):
     def focus_group(self):
         focus = self.get_focus()
         panels = [('search', self.search_entry), ('results', self.results_box),
-                  ('backlinks', self.backlinks_box), ('outgoing_links', self.outgoing_box), ('health', self.health_box)]
+                  ('backlinks', self.inspector_panels['backlinks']), ('outgoing_links', self.inspector_panels['outgoing_links']), ('health', self.inspector_panels['health'])]
         for group, widget in panels:
             if focus == widget or (focus and focus.is_ancestor(widget)):
                 return group
@@ -223,6 +247,12 @@ class Window(Gtk.ApplicationWindow):
         focus = self.get_focus()
         editing = isinstance(focus, Gtk.Editable) and focus.get_editable()
         group = self.focus_group()
+        if keyval == Gdk.KEY_F5 or (control and keyval in (Gdk.KEY_r, Gdk.KEY_R)):
+            self.submit('reindex' if control and shift and keyval in (Gdk.KEY_r, Gdk.KEY_R) else 'refresh')
+            return True
+        if control and keyval in (Gdk.KEY_o, Gdk.KEY_O):
+            self.submit('open_external')
+            return True
         if (control and keyval in (Gdk.KEY_f, Gdk.KEY_F)) or (keyval == Gdk.KEY_slash and not editing):
             self.focus_panel('search', select_text=True)
             self.submit('set_focus', 'search')
@@ -236,7 +266,7 @@ class Window(Gtk.ApplicationWindow):
             self.submit('set_focus', target)
             return True
         if group == 'navigation' and keyval in (Gdk.KEY_Left, Gdk.KEY_Right):
-            buttons = [button for button in (self.back_button, self.refresh_button, self.previous_page, self.next_page) if button.get_sensitive()]
+            buttons = [button for button in (self.back_button, self.refresh_button, self.reindex_button, self.open_button, self.previous_page, self.next_page) if button.get_sensitive()]
             current = next((i for i, button in enumerate(buttons) if button == focus or (focus and focus.is_ancestor(button))), 0)
             buttons[(current + (1 if keyval == Gdk.KEY_Right else -1)) % len(buttons)].grab_focus()
             return True
@@ -246,6 +276,10 @@ class Window(Gtk.ApplicationWindow):
                 self.search_entry.set_text('')
             self.focus_after_update = 'search'
             self.submit('escape', text=text, focus=group)
+            return True
+        if keyval in (Gdk.KEY_Page_Down, Gdk.KEY_Page_Up) and group in ('backlinks', 'outgoing_links') and not control:
+            self.focus_after_update = group
+            self.submit('change_link_page', group, 1 if keyval == Gdk.KEY_Page_Down else -1)
             return True
         if keyval in (Gdk.KEY_Page_Down, Gdk.KEY_Page_Up) and (group == 'results' or control):
             self.focus_after_update = 'results'
@@ -261,6 +295,8 @@ class Window(Gtk.ApplicationWindow):
                 self.submit('move_link', target, delta)
             return True
         if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and group in ('search', 'results', 'backlinks', 'outgoing_links'):
+            if group in self.link_controls and focus in (self.link_controls[group]['previous'], self.link_controls[group]['next']):
+                return False
             target = 'results' if group == 'search' else group
             self.focus_after_update = target
             buttons = self.result_buttons if target == 'results' else self.backlink_buttons if target == 'backlinks' else self.outgoing_buttons
@@ -306,7 +342,7 @@ class Window(Gtk.ApplicationWindow):
                 button.add_css_class('selected-result')
             else:
                 button.remove_css_class('selected-result')
-        if group == 'navigation' and previous_focus in (self.back_button, self.refresh_button, self.previous_page, self.next_page) and previous_focus.get_sensitive():
+        if group == 'navigation' and previous_focus in (self.back_button, self.refresh_button, self.reindex_button, self.open_button, self.previous_page, self.next_page) and previous_focus.get_sensitive():
             previous_focus.grab_focus()
         else:
             self.focus_panel(group)
@@ -345,6 +381,11 @@ class Window(Gtk.ApplicationWindow):
         clear(self.health_box)
         self.backlink_buttons, self.backlink_labels, self.outgoing_labels, self.outgoing_buttons = [], [], [], []
         inspect = snapshot['inspection']
+        for controls in self.link_controls.values():
+            controls['count'].set_text('Enlaces no disponibles')
+            controls['previous'].set_sensitive(False)
+            controls['next'].set_sensitive(False)
+        self.open_button.set_sensitive(bool(inspect and inspect['ok'] and inspect['data']['document'] and not inspect['data']['document']['deleted']))
         if not inspect:
             return
         if not inspect['ok']:
@@ -352,6 +393,11 @@ class Window(Gtk.ApplicationWindow):
             self.metadata_label.set_text(inspect['error']['message'])
             return
         data = inspect['data']
+        for section, controls in self.link_controls.items():
+            page = data['link_pages'][section]
+            controls['count'].set_text(link_page_text(snapshot, section))
+            controls['previous'].set_sensitive(page['offset'] > 0)
+            controls['next'].set_sensitive(page['next_offset'] is not None and page['next_offset'] <= 1000000)
         doc = data['document']
         if doc:
             self.title_label.set_text(doc['title'])
@@ -380,6 +426,11 @@ class Window(Gtk.ApplicationWindow):
                 else:
                     self.outgoing_labels.append(text)
                     self.outgoing_buttons.append(button)
+        disk = data.get('disk_state')
+        if disk and disk['state'] != 'current':
+            message = 'Archivo modificado en disco; reindexa para actualizar los enlaces' if disk['state'] == 'modified' else 'Estado del archivo en disco: ' + disk['state']
+            self.metadata_label.set_text(self.metadata_label.get_text() + '\n' + message)
+            self.health_box.append(label(message, css='warning'))
         health = data['health']
         for error in health['errors']:
             self.health_box.append(label(f"{error['path']}: {error['error']}", css='warning'))
@@ -398,13 +449,13 @@ class Window(Gtk.ApplicationWindow):
         return False
 
 
-def run(workspace, query='', select=None, *, smoke_test=False, page_size=50):
+def run(workspace, query='', select=None, *, smoke_test=False, page_size=50, link_page_size=50, editor=None, editor_dry_run=False):
     if not available():
         raise RuntimeError('GTK 4 no tiene un display disponible; usa --backend snapshot o Xvfb')
     app = Gtk.Application(application_id='io.trama.Reader', flags=Gio.ApplicationFlags.NON_UNIQUE)
     result = dict(report=None, error=None)
     def activate(application):
-        window = Window(application, workspace, query, select, page_size=page_size)
+        window = Window(application, workspace, query, select, page_size=page_size, link_page_size=link_page_size, editor=editor, editor_dry_run=editor_dry_run)
         window.present()
         if not smoke_test:
             return

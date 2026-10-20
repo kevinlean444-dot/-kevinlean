@@ -2,7 +2,7 @@
 
 Ventana real GTK 4 de solo lectura, más TUI y snapshot. Consume exclusivamente el
 [contrato UI v1](ui-contract.md). No indexa automáticamente, no escribe documentos,
-no abre URLs, no instala paquetes al arrancar y no necesita cuenta ni privilegios.
+solo abre archivos locales mediante una acción explícita, no instala paquetes al arrancar y no necesita cuenta ni privilegios.
 
 ## Arquitectura
 
@@ -35,7 +35,8 @@ los aporta GTK; no se descargan recursos visuales.
 `busy` conserva el funcionamiento del bucle gráfico y muestra aviso; Actualizar
 reconsulta. `recovery_needed`, index_missing e index_stale se muestran sin ejecutar
 una escritura automática: indexar desde CLI cuando corresponda. No hay reintentos
-periódicos, servicio permanente, watcher ni editor. El controlador se usa de forma
+periódicos, servicio permanente, watcher ni editor integrado. Desde el incremento 7
+se puede reindexar explícitamente o abrir un editor externo. El controlador se usa de forma
 secuencial; no compartir una instancia entre varios workers externos.
 
 ## Dependencias en Linux local
@@ -227,9 +228,8 @@ rápida. Una cola llena muestra aviso y no acepta otra acción hasta tener espac
 Las llamadas al contrato permanecen fuera del hilo GTK. Estos son límites de
 estructura verificados; no equivalen a una medición de RSS, CPU o latencia.
 
-El inspector sigue cargando el payload completo de enlaces que ofrece el contrato;
-no se virtualizó ese panel en este incremento. Para grafos muy densos sigue siendo
-necesario medir y evaluar paginación de enlaces. Tampoco hay watcher: indexar entre
+El incremento 7 siguiente reemplaza la carga completa de enlaces por páginas
+independientes solicitadas al contrato, con widgets acotados por sección. Tampoco hay watcher: indexar entre
 páginas puede cambiar total y orden, como establece el contrato de lectura.
 
 ### Controlador compartido y terminal
@@ -263,3 +263,97 @@ palabra; Abajo entra en resultados y otra flecha cambia la ficha. Tab lleva a
 backlinks; Enter abre la fuente y Alt+Izquierda vuelve. Continuar con Tab a salientes
 y avisos; / vuelve al buscador. Probar AvPág/RePág con una colección que supere el
 límite. Escape limpia la consulta y, desde búsqueda vacía, vuelve a cerrar.
+
+
+## Incremento 7: inspector acotado, recarga y editor externo
+
+Backlinks y salientes tienen páginas independientes, de 50 ocurrencias por defecto,
+configurables con --link-page-size 1..100. La cabecera muestra, por ejemplo,
+`Mostrando 51–100 de 125 backlinks`, y botones Anterior/Siguiente. No se acumulan
+páginas ni se solicitan todos los enlaces para recortarlos en la vista. Hay como
+máximo link-page-size botones por sección; cambiar una página no cambia la otra.
+Los cursores de flechas cruzan páginas; Enter usa el índice local de la página
+visible. Cambiar de nota reinicia ambas páginas; refrescar la misma las conserva
+salvo que el total disminuya, en cuyo caso se corrigen al último rango válido.
+
+| Tecla / acción | Resultado |
+| --- | --- |
+| AvPág / RePág en Backlinks o Salientes | Página siguiente/anterior de esa sección |
+| Ctrl+AvPág / Ctrl+RePág | Mantiene la paginación global de resultados |
+| Ctrl+R o F5 / Actualizar | Reconsulta status, búsqueda y ficha actual; conserva selección y páginas |
+| Ctrl+Shift+R / Reindexar | Solicita index bajo flock EX desde el worker y recarga la vista al terminar |
+| Ctrl+O / Abrir editor | Valida y abre el archivo actual con el comando externo configurado |
+
+Son atajos de ventana, no globales del sistema. El grupo de navegación incluye
+Atrás, Actualizar, Reindexar, Abrir editor y los botones de páginas de resultados;
+Izquierda/Derecha los recorre. Los botones de páginas de enlaces también se pueden
+activar con ratón o activación nativa cuando tienen foco; AvPág/RePág es el acceso
+directo de teclado dentro de sus paneles.
+
+Actualizar no indexa. El inspector consulta stat y muestra `Archivo modificado en
+disco; reindexa para actualizar los enlaces` si cambiaron sus metadatos. missing,
+unsafe, unreadable o unknown se muestran también como avisos. Para registros
+anteriores sin mtime_ns se necesita una indexación inicial que capture ese dato.
+No se leen contenidos desde la ficha; las posiciones siguen siendo las del índice.
+No hay watcher ni actualización automática al guardar en otro programa.
+
+Reindexar es una acción explícita de metadatos, no una edición de notas. Se ejecuta
+en el mismo worker secuencial, no congela el hilo GTK y devuelve busy si otro proceso
+tiene el espacio bloqueado. Los errores por archivo se conservan y se muestran; un
+index con archivos omitidos no implica que todos se hayan leído correctamente. El
+botón no instala paquetes, no cambia permisos y no aplica resoluciones de conflictos.
+Si un archivo cambia durante su lectura, index registra un error por archivo y pide
+volver a indexar cuando termine de guardarse; nunca pisa el contenido editado.
+
+### Editor externo seguro
+
+Precedencia: --editor explícito, VISUAL no vacío, EDITOR no vacío, xdg-open. La
+cadena de configuración se divide con shlex.split; no se evalúan $, backticks,
+variables, tuberías, redirecciones ni metacaracteres. También se admite lista argv
+mediante la API Python. El archivo se añade siempre como último argumento absoluto,
+sin plantillas de sustitución. El UUID se vuelve a comprobar contra el manifiesto bajo SH antes de lanzar.
+La ruta debe estar registrada y activa, ser regular,
+existir y permanecer dentro del espacio, sin componentes symlink. Rutas absolutas
+como identificador, escapes .., archivos desaparecidos y destinos symlink se rechazan.
+
+Se usa subprocess.Popen(argv, shell=False, close_fds=True, start_new_session=True).
+El proceso no hereda el descriptor de flock y un hilo daemon recoge su terminación.
+No se espera a que el editor cierre para seguir usando GTK. El mensaje confirma la
+solicitud de apertura, no que la aplicación externa haya mostrado ventana o guardado
+correctamente. El comando configurado es código elegido por el usuario, nunca por
+el contenido de una nota. Elegir un editor gráfico para GTK; uno de terminal puede
+necesitar un terminal propio. Trama no escribe notas, pero un editor externo puede
+guardarlas por decisión del usuario. Como el resto del proyecto, no garantiza
+protección frente a sustituciones maliciosas concurrentes hechas fuera de flock.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m trama_core ui .demo/espacio --backend gtk --query cafe --link-page-size 50 --editor 'gedit --new-window'
+PYTHONPATH=src .venv/bin/python -m trama_core ui .demo/espacio --backend gtk --query cafe --editor 'editor-simulado --new-window' --editor-dry-run
+```
+
+La segunda orden no lanza nada por sí sola; al pulsar Ctrl+O muestra el argv sin
+crear procesos. gedit es solo un ejemplo si el usuario ya lo tiene instalado: no se
+instala ni se supone disponible. Sin --editor se usan las alternativas anteriores.
+El modo dry-run usa las mismas validaciones de ruta que la apertura real.
+
+```python
+from trama_core.ui import Presenter
+p = Presenter('/ruta/al/espacio', editor=['editor-simulado', '--new-window'], editor_dry_run=True)
+p.refresh(select='nota.md')
+p.open_external()
+print(p.snapshot()['external_action'])
+```
+
+El controlador guarda link_offsets y link_page_size y expone change_link_page,
+refresh/reindex y open_external. index_action y external_action muestran los
+resultados estructurados del último comando. En tests, open_document/open_external
+aceptan runner inyectado compatible con Popen; nunca hace falta abrir un programa
+real. Snapshot sigue sin ejecutar acciones al arrancar. TUI añade /reindexar,
+/abrir-editor, /enlaces-siguiente y /enlaces-anterior (estos dos usan el panel fijado
+por /foco backlinks o /foco outgoing_links). /estado sigue siendo recarga de lectura.
+
+Prueba nueva bajo Xvfb: nota con 125 backlinks y 125 salientes, widgets 50/50/25,
+páginas independientes, modificación simulada del usuario, Ctrl+R (aviso modified),
+Ctrl+Shift+R (índice al día) y Ctrl+O dry-run. Se comparan bytes de todos los originales,
+salvo el cambio deliberado de la fixture realizado para simular al usuario. No se
+mide RSS/CPU ni se afirma compatibilidad de editores externos concretos.

@@ -1,7 +1,8 @@
 # Contrato de lectura de Trama · versión 1
 
 API Python en `trama_core.ui_contract`, solo biblioteca estándar. El frontend no
-abre SQLite, no lee Markdown para completar respuestas ni altera notas. Todas las
+abre SQLite ni altera notas. Solo el inspector consulta metadatos de disco con stat;
+el texto y los enlaces proceden del índice, no de releer Markdown. Todas las
 respuestas son objetos JSON; los nombres de campos siguientes forman el contrato.
 Versión de contrato 1, manifiesto 2, esquema SQLite 4 y grafo heredado 3 son números
 independientes. Campos nuevos incompatibles requerirán otra versión del contrato.
@@ -11,7 +12,7 @@ independientes. Campos nuevos incompatibles requerirán otra versión del contra
 ```python
 from trama_core import ui_contract
 ui_contract.search(space, 'cafe', limit=20, offset=0)
-ui_contract.inspect_document(space, 'nota.md')  # también acepta UUID
+ui_contract.inspect_document(space, 'nota.md', link_limit=50, backlinks_offset=0, outgoing_offset=0)  # también UUID
 ui_contract.status(space)
 ```
 
@@ -113,6 +114,8 @@ entre llamadas distintas.
 
 Campos exactos:
 
+- `link_pages`: metadatos de paginación independientes de backlinks y outgoing_links.
+- `disk_state`: estado de metadatos del archivo seleccionado, o null si no hay documento.
 - `document`: objeto Document o null.
 - `backlinks`: array Link de ocurrencias cuyo destino resuelto es el UUID consultado.
 - `outgoing_links`: array Link de todas las ocurrencias con ese UUID como fuente.
@@ -120,7 +123,7 @@ Campos exactos:
 
 Al resolver una ruta se prefiere su registro activo; si solo hay varios históricos,
 se requiere UUID. Si una ruta falló antes de obtener identidad, la ficha devuelve
-`document=null`, arrays de enlaces vacíos y los errores de esa ruta en health.
+`document=null`, arrays de enlaces vacíos, páginas con total=0, disk_state=null y errores en health.
 
 Link tiene exactamente:
 
@@ -140,7 +143,8 @@ Orden de enlaces: position ascendente. Las ocurrencias repetidas se conservan; d
 enlaces de la misma nota no incrementan backlink_count dos veces. El contexto se
 limita a unos 160 caracteres a cada lado del enlace y luego a 500 caracteres; una
 línea muy larga puede truncarse. Línea/contexto corresponden al último index, nunca
-se recalculan abriendo documentos desde el contrato. Las limitaciones del parser
+se recalculan leyendo el contenido desde el contrato. Un disk_state=modified advierte
+que esas posiciones pueden estar desactualizadas. Las limitaciones del parser
 Markdown del núcleo se conservan (no es CommonMark completo).
 
 `health.errors`: array `{path, error}` de errores de indexación cuya ruta coincide
@@ -193,8 +197,10 @@ SQLite guarda `metadata.manifest_digest`: SHA-256 del JSON lógico del manifiest
 serializado UTF-8 con claves ordenadas y separadores canónicos. Reordenar espacios
 o claves en disco no lo invalida; cambiar datos sí. Una huella distinta o un índice
 antiguo devuelve index_stale; index lo reconstruye con esquema 4 y guarda posiciones.
-No detecta ediciones de notas aún no indexadas: representa el último estado indexado,
-no una vista viva del disco. Un futuro watcher deberá solicitar indexación.
+La huella detecta desincronización entre manifiesto e índice. El inspector añade
+disk_state para cambios de metadatos del archivo seleccionado; no inspecciona todo
+el disco, ni actualiza automáticamente búsqueda o enlaces. Un futuro watcher podría
+solicitar indexación explícita.
 
 El bloqueo es cooperativo/advisory para sistemas de archivos Linux con flock. No
 impide ediciones externas de documentos ni modificaciones manuales de .trama; estas
@@ -211,3 +217,48 @@ de estado usa status. Mostrar needs_update, ambigüedad y errores como avisos vi
 sin corregir documentos automáticamente. Tratar busy como reintentable y pedir una
 indexación para recovery_needed/index_stale. El siguiente incremento puede ser una
 ventana mínima de solo lectura o un fallback TUI; no hay GTK instalado en este cambio.
+
+
+## Extensión de inspector en incremento 7
+
+La envoltura se mantiene en versión 1. Se añaden parámetros y campos a inspect;
+**backlinks y outgoing_links ahora contienen solo una página por defecto**. Los
+clientes que asumían arrays completos deben seguir next_offset y total. No hay
+cambio en los esquemas de Link ni de búsqueda, manifiesto v2 o SQLite v4.
+
+Parámetros Python: link_limit entero 1..100 (por defecto 50), backlinks_offset y
+outgoing_offset enteros 0..1_000_000 (por defecto 0). Los inválidos producen
+invalid_request. Se aplican LIMIT/OFFSET directamente en SQLite: no se carga una
+lista completa para cortarla en Python. Los totales cuentan ocurrencias; el campo
+document.backlink_count sigue contando fuentes distintas. Existen índices sobre
+links.source y links.target en las reconstrucciones nuevas; índices antiguos
+siguen siendo legibles pero una reindexación añade esas optimizaciones.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m trama_core ui-query .demo/espacio inspect Inicio.md --link-limit 50 --backlinks-offset 50 --outgoing-offset 0
+```
+
+`link_pages` tiene exactamente dos claves, backlinks y outgoing_links. Cada objeto
+contiene limit, offset, total (enteros) y next_offset (entero o null). Se ordena por
+position, igual que antes. Una página fuera del total devuelve array vacío y
+next_offset=null. Los offsets son independientes; la consulta utiliza una única
+transacción de lectura para los dos arrays y sus totales. No hay snapshot mantenido
+entre llamadas: reindexar puede cambiar el orden o total entre páginas.
+
+`disk_state` tiene exactamente state y modified. state pertenece a current,
+modified, unknown, missing, unsafe o unreadable. modified es false para current,
+true para modified y null para los demás. Se comparan size/device/inode/mtime_ns con
+los registrados al indexar, sin abrir el archivo para leer contenido. Un registro
+antiguo sin mtime_ns da unknown salvo que cambie otro metadato; reindexar lo completa.
+Un toque de mtime puede avisar aunque el texto sea idéntico; una edición que restaure
+todos los metadatos podría pasar inadvertida. No es una verificación de hash.
+Los symlinks de archivo y directorio se rechazan antes de consultar el destino.
+
+Un archivo modificado no vuelve inválido el índice derivado del manifiesto: la
+respuesta sigue ok/ready, con el aviso disk_state=modified. index_stale se reserva
+para el desfase SQLite/manifiesto. La UI muestra el aviso y ofrece la acción explícita
+de reindexar. Ni refresh ni inspect escriben documentos o reindexan por sí solos.
+
+Las acciones reindex_space y open_document viven en desktop_actions; son comandos
+explícitos separados de esta API de lectura. La primera llama a index bajo EX; la
+segunda valida la ruta y ejecuta argv sin shell. ui-window.md documenta sus opciones.

@@ -160,3 +160,8 @@ Extensión del índice en incremento 4: SQLite user_version=4 incluye `metadata`
 manifiesto permanece en v2, el grafo heredado en v3 y el nuevo contrato UI en v1.
 Reindexar actualiza índices anteriores sin modificar originales. El archivo .lock
 es estado de coordinación permanente, no parte del manifiesto ni de su huella.
+
+Incremento 7 añade mtime_ns opcional a cada registro observado al indexar. No cambia
+la identidad ni el hash; permite avisar de modificaciones por metadatos sin releer
+contenido desde el inspector. Un manifiesto anterior sigue siendo válido, con estado
+de disco unknown hasta reindexar si los demás metadatos siguen iguales.

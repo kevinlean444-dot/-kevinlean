@@ -12,3 +12,8 @@ Cada tarea cloud ya está aislada: trabaja en el checkout existente sin crear wo
 Las operaciones públicas deben usar space_lock: EX para escrituras, SH para lecturas.
 Nunca eliminar .trama/.lock al liberar el bloqueo. Los frontends usan ui_contract,
 no helpers privados, acceso directo a SQLite ni lecturas de notas para enriquecer datos.
+
+Incremento 7: la UI puede reindexar solo por acción explícita (desktop_actions,
+con flock), y abrir el editor externo con argv validado, sin shell. Nunca escribir
+notas desde Trama ni lanzar procesos al seleccionar un documento. Las listas de
+enlaces del inspector deben solicitar páginas, no cargar el grafo completo.

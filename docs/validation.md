@@ -1,6 +1,6 @@
 # Registro de validación de Trama
 
-Entorno de incrementos 5 y 6: Python 3.13.5 del sistema, SQLite 3.46.1/FTS5, PyGObject 3.50.0,
+Entorno de incrementos 5–7: Python 3.13.5 del sistema, SQLite 3.46.1/FTS5, PyGObject 3.50.0,
 GTK 4.18.6 en Debian 13 amd64 bajo Xvfb. Se preservó el venv previo Python 3.12.14
 con el que se habían validado los incrementos 1–4 (SQLite 3.53.1).
 
@@ -11,8 +11,9 @@ Comando real de la suite completa:
 xvfb-run -a dbus-run-session -- env GTK_A11Y=none GSK_RENDERER=cairo G_DEBUG=fatal-warnings PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Resultado del incremento 6: 49 pruebas ejecutadas, 49 correctas, sin omitidas.
-Las 45 anteriores siguen pasando sin cambios en sus archivos de test.
+Resultado del incremento 7: 55 pruebas ejecutadas, 55 correctas, sin omitidas.
+Las 49 anteriores siguen pasando; solo se corrigió el cierre de conexiones SQLite
+en tres fixtures, sin cambiar sus aserciones.
 Salida real completa: test-output.txt.
 
 Las 7 originales en test_core.py permanecen intactas. La antigua prueba de asignación
@@ -164,4 +165,43 @@ xvfb-run -a dbus-run-session -- env GTK_A11Y=none GSK_RENDERER=cairo G_DEBUG=fat
 salida de unittest en este contenedor; no es una medida de latencia de interacción.
 No se midieron RSS/CPU ni se probó teclado físico o lector de pantalla en Arch/Xfce.
 La evidencia comprueba límites de estructuras/widgets y eventos del controlador GTK;
-el inspector sigue usando el payload completo del contrato para enlaces muy densos.
+en ese incremento el inspector todavía usaba el payload completo; el incremento 7
+lo reemplaza por consultas paginadas.
+
+
+Incremento 7 — inspector paginado y acciones explícitas de escritorio
+
+Seis pruebas nuevas en test_inspector_actions.py:
+
+- Contrato y controlador con 125 backlinks y 125 salientes: solo 50 por sección en
+  la primera respuesta, totales exactos, páginas 50/50/25 independientes, offsets
+  inválidos, flechas que cruzan página y activación del backlink de la página actual.
+  Se comprueba también que reducir el total al editar/reindexar corrige offsets.
+- Nota editada por el usuario: refresh detecta modified sin escribir; reindexar bajo
+  un bloqueo ajeno devuelve busy sin alterar el par SQLite/manifiesto; después de
+  liberarlo actualiza título/metadata y da current, conservando los bytes editados.
+- Apertura externa con runner simulado: argv exacto, shell=False, close_fds y sesión
+  nueva; nombres con espacios/metacaracteres no se evalúan. VISUAL tiene prioridad
+  y dry-run no llama al runner. Se comparan bytes antes/después.
+- Rechazo de rutas externas, escapes, archivos ausentes y symlinks sin lanzar nada.
+- Archivo cambiado mientras se lee para indexar: error por archivo, sin asociar el
+  contenido anterior con metadatos nuevos ni sobrescribir el cambio del usuario.
+- GTK real bajo Xvfb: máximo 50 botones en cada sección, páginas 50/50/25, Ctrl+R
+  detecta edición, Ctrl+Shift+R reconstruye el índice y Ctrl+O dry-run prepara el
+  programa configurado sin ejecutar un editor real. Compara todos los documentos,
+  descontando solamente la edición deliberada hecha por la fixture. Exige stderr
+  vacío con avisos GTK/Python fatales y cierre limpio del bucle.
+
+Comando real:
+
+```bash
+. scripts/gtk-env.sh
+xvfb-run -a dbus-run-session -- env GTK_A11Y=none GSK_RENDERER=cairo G_DEBUG=fatal-warnings PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v
+```
+
+Salida final: `Ran 55 tests in 2.708s`, `OK`, sin omisiones ni avisos. El log completo
+es test-output.txt. Se eliminaron ResourceWarning de Python 3.13 al cerrar las
+conexiones de tres fixtures antiguas con contextlib.closing; no se desactivó ninguna
+advertencia ni prueba. No se midió RSS/CPU ni se abrió un editor gráfico externo
+real: se verificó su argv y el rechazo de rutas mediante inyector y dry-run.
+La detección modified se basa en metadatos, no demuestra igualdad de contenido.

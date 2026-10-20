@@ -114,3 +114,15 @@ RePág cambian de página desde resultados. Escape limpia y, en búsqueda vacía
 La lista muestra el rango de resultados, máximo 50 por defecto (configurable 1..100).
 [Tabla completa de atajos y límites](docs/ui-window.md). Snapshot y TUI aceptan
 --page-size; el controlador conserva cursores e historial limitado sin escribir notas.
+
+
+Inspector paginado y acciones de escritorio (incremento 7):
+
+```bash
+PYTHONPATH=src .venv/bin/python -m trama_core ui .demo/espacio --backend gtk --query cafe --link-page-size 50 --editor-dry-run
+```
+
+AvPág/RePág en backlinks o salientes cambia su página. Ctrl+R/F5 recarga, Ctrl+Shift+R
+reindexa explícitamente con bloqueo y Ctrl+O abre el documento en editor externo
+(o muestra la orden si --editor-dry-run). El inspector avisa si el archivo cambió
+por metadatos y aún no se reindexó. [Acciones, seguridad y límites](docs/ui-window.md).

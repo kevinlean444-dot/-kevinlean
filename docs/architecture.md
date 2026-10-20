@@ -79,7 +79,7 @@ sistema con system-site-packages para mantener compatible PyGObject.
 
 La prueba --smoke-test presenta widgets reales, hace búsqueda/selección y valida sus
 textos antes de cerrar GLib. No se implementan watcher, indexación automática ni
-escrituras desde GUI. docs/ui-window.md describe comandos, runtime y límites.
+edición de notas desde GUI. El incremento 7 permite reindexación explícita de metadatos. docs/ui-window.md describe comandos, runtime y límites.
 Incremento 6: el controlador compartido añade páginas configurables, cursores,
 acciones de foco/activación y Escape. GTK traduce eventos mediante un controlador
 de teclas en captura y conserva el foco al representar resultados. Render separado
@@ -88,8 +88,15 @@ páginas reemplazan sus widgets, el historial se acota a 100 y el worker limita 
 agrupa solicitudes pendientes. TUI y snapshot exponen las mismas acciones/estado.
 No se cambia el contrato de lectura ni el formato del índice. No hay mediciones
 de RSS/latencia: se verifican límites de páginas, historial y cola.
-Próximo paso: revisión manual de teclado, foco y accesibilidad en Arch/Xfce, más
-medición de grafos densos para decidir paginación de enlaces del inspector.
+Incremento 7: inspect pagina backlinks y salientes en SQL, con totales y offsets
+independientes; la vista conserva solo cada página. El contrato añade disk_state
+basado en stat; index captura mtime_ns como metadato opcional del manifiesto v2.
+Actualizar (Ctrl+R/F5) no escribe; reindexar (Ctrl+Shift+R) usa el comando público
+bajo flock desde el worker. desktop_actions separa esos comandos de la API de
+lectura y de los widgets. La apertura externa valida documento/ruta, toma SH y usa
+argv sin shell, con dry-run e inyector de proceso para pruebas headless.
+Próximo paso: revisión de accesibilidad y medición de latencia/RSS en un escritorio
+real, y validar el comportamiento con editores externos instalados por el usuario.
 
 Roadmap posterior: núcleo fiable → ventana mínima de búsqueda/backlinks → integración
 Xfce → evaluación de distribución Arch. Sin promesas de rendimiento o compatibilidad.
