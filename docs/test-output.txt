@@ -39,12 +39,16 @@ test_search_relevance_snippets_unicode_pagination_and_flags (test_ui_contract.UI
 test_shared_process_allows_read_but_not_write (test_ui_contract.UIContractTests.test_shared_process_allows_read_but_not_write) ... ok
 test_status_counts_and_health (test_ui_contract.UIContractTests.test_status_counts_and_health) ... ok
 test_ui_reports_recovery_needed_without_mutation (test_ui_contract.UIContractTests.test_ui_reports_recovery_needed_without_mutation) ... ok
+test_real_key_controller_focus_paging_links_and_escape (test_ui_keyboard.GTKKeyboardTests.test_real_key_controller_focus_paging_links_and_escape) ... ok
+test_arrows_links_enter_history_and_focus_cycle (test_ui_keyboard.KeyboardPresenterTests.test_arrows_links_enter_history_and_focus_cycle) ... ok
+test_cli_page_size_snapshot_and_tui (test_ui_keyboard.KeyboardPresenterTests.test_cli_page_size_snapshot_and_tui) ... ok
+test_large_collection_paging_is_bounded_and_history_capped (test_ui_keyboard.KeyboardPresenterTests.test_large_collection_paging_is_bounded_and_history_capped) ... ok
 test_auto_falls_back_without_display_and_smoke_never_fakes_gtk (test_ui_presenter.PresenterTests.test_auto_falls_back_without_display_and_smoke_never_fakes_gtk) ... ok
 test_busy_recovery_and_not_found_without_writes (test_ui_presenter.PresenterTests.test_busy_recovery_and_not_found_without_writes) ... ok
 test_search_selection_navigation_back_and_immutability (test_ui_presenter.PresenterTests.test_search_selection_navigation_back_and_immutability) ... ok
 test_terminal_snapshot_and_tui_use_same_data (test_ui_presenter.PresenterTests.test_terminal_snapshot_and_tui_use_same_data) ... ok
 
 ----------------------------------------------------------------------
-Ran 45 tests in 1.856s
+Ran 49 tests in 2.966s
 
 OK

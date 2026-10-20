@@ -43,12 +43,13 @@ def main():
     ui.add_argument("--backend", choices=("auto", "gtk", "tui", "snapshot"), default="auto")
     ui.add_argument("--query", default="")
     ui.add_argument("--select")
+    ui.add_argument("--page-size", type=int, default=50, help="Resultados por página, 1..100")
     ui.add_argument("--smoke-test", action="store_true")
     args = parser.parse_args()
     try:
         if args.command == "ui":
             from .ui.launcher import run
-            return run(args.workspace, backend=args.backend, query=args.query, select=args.select, smoke_test=args.smoke_test)
+            return run(args.workspace, backend=args.backend, query=args.query, select=args.select, smoke_test=args.smoke_test, page_size=args.page_size)
         if args.command == "ui-query":
             if args.view == "search":
                 result = ui_contract.search(args.workspace, args.text, limit=args.limit, offset=args.offset)

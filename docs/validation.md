@@ -1,6 +1,6 @@
 # Registro de validación de Trama
 
-Incremento 5: Python 3.13.5 del sistema, SQLite 3.46.1/FTS5, PyGObject 3.50.0,
+Entorno de incrementos 5 y 6: Python 3.13.5 del sistema, SQLite 3.46.1/FTS5, PyGObject 3.50.0,
 GTK 4.18.6 en Debian 13 amd64 bajo Xvfb. Se preservó el venv previo Python 3.12.14
 con el que se habían validado los incrementos 1–4 (SQLite 3.53.1).
 
@@ -11,8 +11,9 @@ Comando real de la suite completa:
 xvfb-run -a dbus-run-session -- env GTK_A11Y=none GSK_RENDERER=cairo G_DEBUG=fatal-warnings PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v
 ```
 
-Resultado: 45 pruebas ejecutadas, 45 correctas, sin omitidas. Las 40 anteriores
-siguen pasando sin cambios en sus archivos de test. Salida real: test-output.txt.
+Resultado del incremento 6: 49 pruebas ejecutadas, 49 correctas, sin omitidas.
+Las 45 anteriores siguen pasando sin cambios en sus archivos de test.
+Salida real completa: test-output.txt.
 
 Las 7 originales en test_core.py permanecen intactas. La antigua prueba de asignación
 en documento se sustituyó por una de inmutabilidad; los tests CRLF usan index sin
@@ -127,4 +128,40 @@ Incremento 5 — presentador, GTK real y terminal
 La prueba GTK se omite explícitamente si se ejecuta sin display o gi; esa ejecución
 no demostraría la ventana. El comando Xvfb de este registro ejecutó las 45 sin
 omisiones. No se certifica Arch/Xfce real, HiDPI, tecnologías de asistencia ni
-rendimiento; la GUI no tiene todavía paginación visual, watcher ni editor.
+rendimiento; la GUI añade paginación visual en el incremento 6, pero sigue sin watcher ni editor.
+
+
+Incremento 6 — teclado, foco y páginas limitadas
+
+Cuatro pruebas nuevas en test_ui_keyboard.py:
+
+- Controlador sin GTK: flechas seleccionan/inspeccionan resultados y cruzan páginas;
+  Enter abre la fuente de un backlink, Atrás restaura el UUID anterior y los enlaces
+  ambiguos/rotos no abren una nota inventada. Se comprueban ciclo y reverso de foco,
+  Escape contextual y snapshots de bytes antes/después.
+- Colección de 137 notas: páginas 50/50/37, límites de primera/última página,
+  reinicio de consulta, resultados vacíos y recorrido completo por flechas. Una sola
+  página permanece en estado y el historial nunca supera 100 entradas.
+- CLI: page-size común en snapshot y TUI; tamaños fuera de 1..100 se rechazan, también
+  antes de activar GTK. El rango visible coincide con total y lote recibido.
+- GTK real bajo Xvfb: Gtk.EventControllerKey unido a la ventana en captura; señales
+  key-pressed para Ctrl+F, / dentro/fuera de edición, flechas, AvPág, Tab/Shift+Tab,
+  Enter, Alt+Izquierda, Backspace editable y Escape. Verifica foco/pestañas, selección
+  del texto, inspección del resultado y navegación histórica, render sin reconstruir
+  botones de resultados, mantenimiento del caret y botón de navegación al refrescar.
+  Doscientas búsquedas solicitadas sin drenar el loop permanecen agrupadas en una
+  ejecución y como máximo una pendiente. Se comprueban stderr vacío, avisos GTK y
+  Python fatales, cierre limpio y bytes intactos de todo el espacio.
+
+Comando ejecutado (igual que el incremento gráfico anterior):
+
+```bash
+. scripts/gtk-env.sh
+xvfb-run -a dbus-run-session -- env GTK_A11Y=none GSK_RENDERER=cairo G_DEBUG=fatal-warnings PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v
+```
+
+Último resultado: `Ran 49 tests in 2.966s`, `OK`. Sin omitidas. El tiempo es solo la
+salida de unittest en este contenedor; no es una medida de latencia de interacción.
+No se midieron RSS/CPU ni se probó teclado físico o lector de pantalla en Arch/Xfce.
+La evidencia comprueba límites de estructuras/widgets y eventos del controlador GTK;
+el inspector sigue usando el payload completo del contrato para enlaces muy densos.

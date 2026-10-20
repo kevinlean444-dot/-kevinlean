@@ -80,8 +80,16 @@ sistema con system-site-packages para mantener compatible PyGObject.
 La prueba --smoke-test presenta widgets reales, hace búsqueda/selección y valida sus
 textos antes de cerrar GLib. No se implementan watcher, indexación automática ni
 escrituras desde GUI. docs/ui-window.md describe comandos, runtime y límites.
-Próximo paso: paginación visual y revisión de teclado/foco en un escritorio real,
-antes de añadir integración Xfce o funciones de escritura.
+Incremento 6: el controlador compartido añade páginas configurables, cursores,
+acciones de foco/activación y Escape. GTK traduce eventos mediante un controlador
+de teclas en captura y conserva el foco al representar resultados. Render separado
+por respuesta de búsqueda/ficha evita reconstruir toda la lista al navegar. Las
+páginas reemplazan sus widgets, el historial se acota a 100 y el worker limita y
+agrupa solicitudes pendientes. TUI y snapshot exponen las mismas acciones/estado.
+No se cambia el contrato de lectura ni el formato del índice. No hay mediciones
+de RSS/latencia: se verifican límites de páginas, historial y cola.
+Próximo paso: revisión manual de teclado, foco y accesibilidad en Arch/Xfce, más
+medición de grafos densos para decidir paginación de enlaces del inspector.
 
 Roadmap posterior: núcleo fiable → ventana mínima de búsqueda/backlinks → integración
 Xfce → evaluación de distribución Arch. Sin promesas de rendimiento o compatibilidad.

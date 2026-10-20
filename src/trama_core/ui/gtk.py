@@ -5,9 +5,10 @@ from pathlib import Path
 import gi
 
 gi.require_version('Gtk', '4.0')
-from gi.repository import Gio, GLib, Gtk
+gi.require_version('Gdk', '4.0')
+from gi.repository import Gdk, Gio, GLib, Gtk
 
-from . import Presenter, link_text, notices, status_text
+from . import FOCUS_ORDER, Presenter, link_text, notices, status_text, page_text
 
 
 def available():
@@ -37,20 +38,25 @@ def scroller(child):
 
 
 class Window(Gtk.ApplicationWindow):
-    def __init__(self, application, workspace, query='', select=None):
+    def __init__(self, application, workspace, query='', select=None, *, page_size=50):
         super().__init__(application=application, title='Trama · Lectura local')
         self.set_default_size(1120, 760)
         self.add_css_class('trama')
-        self.controller = Presenter(workspace)
+        self.controller = Presenter(workspace, page_size=page_size)
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='trama-reader')
         self.closed = False
         self.pending = 0
         self.ticket = 0
+        self.jobs = []
+        self.running = False
+        self.focus_after_update = 'search'
+        self.rendered_search = object()
+        self.rendered_inspection = object()
         self.debounce = None
         self.snapshot = None
         self.worker_error = None
         self.result_buttons, self.result_labels = [], []
-        self.backlink_buttons, self.backlink_labels, self.outgoing_labels = [], [], []
+        self.backlink_buttons, self.backlink_labels, self.outgoing_labels, self.outgoing_buttons = [], [], [], []
         self.connect('close-request', self.on_close)
         provider = Gtk.CssProvider()
         provider.load_from_path(str(Path(__file__).with_name('style.css')))
@@ -66,6 +72,7 @@ class Window(Gtk.ApplicationWindow):
         refresh.set_tooltip_text('Volver a consultar el índice sin modificar notas')
         refresh.connect('clicked', lambda _: self.submit('refresh'))
         header.pack_end(refresh)
+        self.refresh_button = refresh
         self.set_titlebar(header)
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.banner = label(css='warning')
@@ -84,7 +91,16 @@ class Window(Gtk.ApplicationWindow):
         self.results_count = label('Buscando…', css='muted')
         left.append(self.results_count)
         self.results_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.results_box.set_focusable(True)
         left.append(scroller(self.results_box))
+        paging = Gtk.Box(spacing=8)
+        self.previous_page = Gtk.Button(label='Página anterior', sensitive=False)
+        self.next_page = Gtk.Button(label='Página siguiente', sensitive=False)
+        self.previous_page.connect('clicked', lambda _: self.submit('change_page', -1))
+        self.next_page.connect('clicked', lambda _: self.submit('change_page', 1))
+        paging.append(self.previous_page)
+        paging.append(self.next_page)
+        left.append(paging)
         paned.set_start_child(left)
         paned.set_resize_start_child(False)
         paned.set_shrink_start_child(False)
@@ -97,11 +113,13 @@ class Window(Gtk.ApplicationWindow):
         right.append(self.title_label)
         right.append(self.metadata_label)
         notebook = Gtk.Notebook(vexpand=True)
+        self.notebook = notebook
         self.backlinks_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.outgoing_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.health_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         for box, title in ((self.backlinks_box, 'Backlinks'), (self.outgoing_box, 'Enlaces salientes'), (self.health_box, 'Avisos')):
             box.add_css_class('paper')
+            box.set_focusable(True)
             notebook.append_page(scroller(box), Gtk.Label(label=title))
         right.append(notebook)
         paned.set_end_child(right)
@@ -109,14 +127,41 @@ class Window(Gtk.ApplicationWindow):
         self.status_label = label('Cargando estado…', css='statusbar')
         root.append(self.status_label)
         self.set_child(root)
+        self.key_controller = Gtk.EventControllerKey()
+        self.key_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        self.key_controller.connect('key-pressed', self.key_pressed)
+        self.add_controller(self.key_controller)
         self.submit('refresh', query=query, select=select)
 
     def submit(self, operation, *args, **kwargs):
         if self.closed:
             return
         self.ticket += 1
-        ticket = self.ticket
-        self.pending += 1
+        job = [operation, args, kwargs, self.ticket]
+        if (self.jobs and self.jobs[-1][0] == operation and operation in ('search', 'set_focus', 'move_result', 'move_link')
+                and (operation != 'move_link' or self.jobs[-1][1][0] == args[0])):
+            previous = self.jobs[-1]
+            if operation == 'move_result':
+                job[1] = (previous[1][0] + args[0],)
+            elif operation == 'move_link' and previous[1][0] == args[0]:
+                job[1] = (args[0], previous[1][1] + args[1])
+            self.jobs[-1] = job
+        elif len(self.jobs) < 16:
+            self.jobs.append(job)
+        else:
+            self.ticket -= 1
+            self.banner.set_text('Hay acciones pendientes; vuelve a intentarlo en un momento.')
+            self.banner.set_visible(True)
+            return
+        self.pending = int(self.running) + len(self.jobs)
+        self.launch_next()
+
+    def launch_next(self):
+        if self.running or self.closed or not self.jobs:
+            return
+        operation, args, kwargs, ticket = self.jobs.pop(0)
+        self.running = True
+        self.pending = 1 + len(self.jobs)
         def work():
             getattr(self.controller, operation)(*args, **kwargs)
             return self.controller.snapshot()
@@ -124,7 +169,8 @@ class Window(Gtk.ApplicationWindow):
         future.add_done_callback(lambda task: GLib.idle_add(self.complete, task, ticket))
 
     def complete(self, future, ticket):
-        self.pending -= 1
+        self.running = False
+        self.pending = len(self.jobs)
         if self.closed:
             return GLib.SOURCE_REMOVE
         try:
@@ -133,12 +179,98 @@ class Window(Gtk.ApplicationWindow):
             self.worker_error = str(exc)
             self.banner.set_text('No se pudo completar la lectura. Usa Actualizar para reintentar.')
             self.banner.set_visible(True)
-            return GLib.SOURCE_REMOVE
-        if ticket == self.ticket:
-            self.worker_error = None
-            self.snapshot = snapshot
-            self.render(snapshot)
+        else:
+            if ticket == self.ticket:
+                self.worker_error = None
+                self.snapshot = snapshot
+                self.render(snapshot)
+        self.launch_next()
         return GLib.SOURCE_REMOVE
+
+    def focus_group(self):
+        focus = self.get_focus()
+        panels = [('search', self.search_entry), ('results', self.results_box),
+                  ('backlinks', self.backlinks_box), ('outgoing_links', self.outgoing_box), ('health', self.health_box)]
+        for group, widget in panels:
+            if focus == widget or (focus and focus.is_ancestor(widget)):
+                return group
+        return 'navigation'
+
+    def focus_panel(self, group, *, select_text=False):
+        state = self.snapshot or {}
+        if group == 'search':
+            if self.focus_group() != 'search':
+                self.search_entry.grab_focus()
+            if select_text:
+                self.search_entry.select_region(0, -1)
+        elif group == 'results':
+            position = max(0, state.get('result_cursor', 0))
+            target = self.result_buttons[min(position, len(self.result_buttons) - 1)] if self.result_buttons else self.results_box
+            target.grab_focus()
+        elif group in ('backlinks', 'outgoing_links', 'health'):
+            self.notebook.set_current_page({'backlinks': 0, 'outgoing_links': 1, 'health': 2}[group])
+            buttons = self.backlink_buttons if group == 'backlinks' else self.outgoing_buttons if group == 'outgoing_links' else []
+            position = max(0, state.get('link_cursors', {}).get(group, 0))
+            box = {'backlinks': self.backlinks_box, 'outgoing_links': self.outgoing_box, 'health': self.health_box}[group]
+            (buttons[min(position, len(buttons) - 1)] if buttons else box).grab_focus()
+        else:
+            (self.back_button if self.back_button.get_sensitive() else self.refresh_button).grab_focus()
+
+    def key_pressed(self, controller, keyval, keycode, modifiers):
+        control = bool(modifiers & Gdk.ModifierType.CONTROL_MASK)
+        alt = bool(modifiers & Gdk.ModifierType.ALT_MASK)
+        shift = bool(modifiers & Gdk.ModifierType.SHIFT_MASK)
+        focus = self.get_focus()
+        editing = isinstance(focus, Gtk.Editable) and focus.get_editable()
+        group = self.focus_group()
+        if (control and keyval in (Gdk.KEY_f, Gdk.KEY_F)) or (keyval == Gdk.KEY_slash and not editing):
+            self.focus_panel('search', select_text=True)
+            self.submit('set_focus', 'search')
+            return True
+        if (alt and keyval == Gdk.KEY_Left) or (keyval == Gdk.KEY_BackSpace and not editing):
+            self.submit('back')
+            return True
+        if keyval in (Gdk.KEY_Tab, Gdk.KEY_ISO_Left_Tab):
+            target = FOCUS_ORDER[(FOCUS_ORDER.index(group) + (-1 if shift or keyval == Gdk.KEY_ISO_Left_Tab else 1)) % len(FOCUS_ORDER)]
+            self.focus_panel(target)
+            self.submit('set_focus', target)
+            return True
+        if group == 'navigation' and keyval in (Gdk.KEY_Left, Gdk.KEY_Right):
+            buttons = [button for button in (self.back_button, self.refresh_button, self.previous_page, self.next_page) if button.get_sensitive()]
+            current = next((i for i, button in enumerate(buttons) if button == focus or (focus and focus.is_ancestor(button))), 0)
+            buttons[(current + (1 if keyval == Gdk.KEY_Right else -1)) % len(buttons)].grab_focus()
+            return True
+        if keyval == Gdk.KEY_Escape:
+            text = self.search_entry.get_text()
+            if text:
+                self.search_entry.set_text('')
+            self.focus_after_update = 'search'
+            self.submit('escape', text=text, focus=group)
+            return True
+        if keyval in (Gdk.KEY_Page_Down, Gdk.KEY_Page_Up) and (group == 'results' or control):
+            self.focus_after_update = 'results'
+            self.submit('change_page', 1 if keyval == Gdk.KEY_Page_Down else -1)
+            return True
+        if keyval in (Gdk.KEY_Down, Gdk.KEY_Up) and group in ('search', 'results', 'backlinks', 'outgoing_links'):
+            delta = 1 if keyval == Gdk.KEY_Down else -1
+            target = 'results' if group == 'search' else group
+            self.focus_after_update = target
+            if target == 'results':
+                self.submit('move_result', delta)
+            else:
+                self.submit('move_link', target, delta)
+            return True
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and group in ('search', 'results', 'backlinks', 'outgoing_links'):
+            target = 'results' if group == 'search' else group
+            self.focus_after_update = target
+            buttons = self.result_buttons if target == 'results' else self.backlink_buttons if target == 'backlinks' else self.outgoing_buttons
+            position = next((i for i, button in enumerate(buttons) if focus == button or (focus and focus.is_ancestor(button))), None)
+            if position is not None:
+                self.submit('select_result', position) if target == 'results' else self.submit('navigate', target, position)
+            else:
+                self.submit('activate', target)
+            return True
+        return False
 
     def search_changed(self, entry):
         if self.debounce:
@@ -160,12 +292,36 @@ class Window(Gtk.ApplicationWindow):
         else:
             self.status_label.remove_css_class('warning')
         self.back_button.set_sensitive(bool(snapshot['history']))
+        previous_focus = self.get_focus()
+        group = self.focus_after_update or self.focus_group()
+        self.focus_after_update = None
+        if snapshot['search'] != self.rendered_search:
+            self.rendered_search = snapshot['search']
+            self.render_results(snapshot)
+        if snapshot['inspection'] != self.rendered_inspection:
+            self.rendered_inspection = snapshot['inspection']
+            self.render_inspector(snapshot)
+        for i, button in enumerate(self.result_buttons):
+            if i == snapshot['result_cursor']:
+                button.add_css_class('selected-result')
+            else:
+                button.remove_css_class('selected-result')
+        if group == 'navigation' and previous_focus in (self.back_button, self.refresh_button, self.previous_page, self.next_page) and previous_focus.get_sensitive():
+            previous_focus.grab_focus()
+        else:
+            self.focus_panel(group)
+        if snapshot['close_requested']:
+            self.close()
+
+    def render_results(self, snapshot):
         clear(self.results_box)
         self.result_buttons, self.result_labels = [], []
         response = snapshot['search']
         if response and response['ok']:
-            self.results_count.set_text(f"{response['data']['total']} resultados · {snapshot['query']}")
-            for doc in response['data']['results']:
+            self.results_count.set_text(page_text(snapshot))
+            self.previous_page.set_sensitive(snapshot['offset'] > 0)
+            self.next_page.set_sensitive(response['data']['next_offset'] is not None and response['data']['next_offset'] <= 10000)
+            for i, doc in enumerate(response['data']['results']):
                 box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
                 title = label(doc['title'], css='section')
                 text = label(f"{doc['rel_path']}\n{doc['snippet']}", css='muted')
@@ -174,16 +330,20 @@ class Window(Gtk.ApplicationWindow):
                 if doc['has_conflicts'] or doc['needs_update_count']:
                     box.append(label(f"{doc['needs_update_count']} enlaces por actualizar" + (' · Conflicto' if doc['has_conflicts'] else ''), css='warning'))
                 button = Gtk.Button(child=box)
-                button.connect('clicked', lambda _, identity=doc['uuid']: self.submit('select', identity))
+                button.connect('clicked', lambda _, position=i: self.submit('select_result', position))
                 self.results_box.append(button)
                 self.result_buttons.append(button)
                 self.result_labels.append(title)
         else:
             self.results_count.set_text('Búsqueda no disponible')
+            self.previous_page.set_sensitive(False)
+            self.next_page.set_sensitive(False)
+
+    def render_inspector(self, snapshot):
         clear(self.backlinks_box)
         clear(self.outgoing_box)
         clear(self.health_box)
-        self.backlink_buttons, self.backlink_labels, self.outgoing_labels = [], [], []
+        self.backlink_buttons, self.backlink_labels, self.outgoing_labels, self.outgoing_buttons = [], [], [], []
         inspect = snapshot['inspection']
         if not inspect:
             return
@@ -205,7 +365,7 @@ class Window(Gtk.ApplicationWindow):
             for n, link in enumerate(data[direction]):
                 text = label(link_text(link, direction))
                 button = Gtk.Button(child=text)
-                button.set_sensitive(direction == 'backlinks' or link['status'] == 'resolved')
+                button.set_tooltip_text('Abrir nota' if direction == 'backlinks' or link['status'] == 'resolved' else 'Enlace sin destino único')
                 if link['needs_update']:
                     text.add_css_class('warning')
                 elif link['status'] == 'ambiguous':
@@ -219,6 +379,7 @@ class Window(Gtk.ApplicationWindow):
                     self.backlink_labels.append(text)
                 else:
                     self.outgoing_labels.append(text)
+                    self.outgoing_buttons.append(button)
         health = data['health']
         for error in health['errors']:
             self.health_box.append(label(f"{error['path']}: {error['error']}", css='warning'))
@@ -229,6 +390,7 @@ class Window(Gtk.ApplicationWindow):
 
     def on_close(self, *_):
         self.closed = True
+        self.jobs.clear()
         if self.debounce:
             GLib.source_remove(self.debounce)
             self.debounce = None
@@ -236,13 +398,13 @@ class Window(Gtk.ApplicationWindow):
         return False
 
 
-def run(workspace, query='', select=None, *, smoke_test=False):
+def run(workspace, query='', select=None, *, smoke_test=False, page_size=50):
     if not available():
         raise RuntimeError('GTK 4 no tiene un display disponible; usa --backend snapshot o Xvfb')
     app = Gtk.Application(application_id='io.trama.Reader', flags=Gio.ApplicationFlags.NON_UNIQUE)
     result = dict(report=None, error=None)
     def activate(application):
-        window = Window(application, workspace, query, select)
+        window = Window(application, workspace, query, select, page_size=page_size)
         window.present()
         if not smoke_test:
             return

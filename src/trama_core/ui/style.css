@@ -12,3 +12,6 @@ window.trama { background-color: #f3eadb; color: #35251b; }
 .trama .broken { background-color: #f4ddd3; color: #803c32; }
 .trama .ambiguous { background-color: #eadcea; color: #61415c; }
 .trama .statusbar { background-color: #e5d4bc; padding: 10px; }
+
+.trama button.selected-result { background: #dfc8aa; border: 2px solid #67441d; }
+.trama button:focus-visible { outline: 2px solid #67441d; outline-offset: 2px; }

@@ -23,8 +23,8 @@ Diseño: cabecera con Atrás/Actualizar, Gtk.Paned con buscador y resultados a l
 izquierda, título/metadatos y pestañas Backlinks/Enlaces salientes/Avisos a la derecha,
 barra inferior con contadores. Los botones de backlink abren la fuente; los salientes
 resueltos abren el destino; los rotos, ambiguos y externos no abren nada. Atrás vuelve
-al UUID previo. Fallar una selección no añade un paso al historial. Se muestran hasta
-20 resultados (límite actual del contrato utilizado); todavía no hay paginación visual.
+al UUID previo. Fallar una selección no añade un paso al historial. Se muestra una página de 50 resultados por defecto, configurable con --page-size
+(1..100); las páginas anteriores se reemplazan, no se acumulan.
 
 CSS local en ui/style.css: beige #f3eadb, papel #fffaf1, café #35251b y encabezados
 #e5d4bc. Amarillo suave identifica Actualizar enlace/busy/recovery_needed; rojo claro
@@ -94,6 +94,7 @@ vista textual; con stdin interactivo admite /buscar TEXTO, /abrir UUID|RUTA,
 /resultado N, /entrada N, /salida N, /atras, /estado y /salir. Los índices de selección
 son desde 0 en la lista mostrada. Con stdin no interactivo imprime una sola vista.
 Los controles de terminal en textos de notas se representan sin ejecutarlos.
+El incremento 6 añade los comandos de navegación descritos al final.
 
 ## Runtime real preparado en este contenedor
 
@@ -155,7 +156,110 @@ anula accesibilidad en la ventana normal. Sin display o gi, ese test se marca
 omitido con motivo; para verificar todo, usar el comando Xvfb anterior.
 
 La evidencia cubre GTK 4.18.6 real bajo Xvfb en Debian 13, no una sesión manual de
-Arch/Xfce, escalado HiDPI o tecnologías de asistencia. Próximo incremento pequeño:
-paginación visible de resultados y reintento manual por panel, con una revisión de
-teclado/foco en una sesión de escritorio real. La edición de notas sigue fuera de
-alcance.
+Arch/Xfce, escalado HiDPI o tecnologías de asistencia. La paginación y los atajos se implementaron en el incremento 6 siguiente. La edición
+de notas sigue fuera de alcance y falta validación manual en un escritorio físico.
+
+
+## Incremento 6: teclado y paginación
+
+Los atajos generales están activos **dentro de la ventana**, mediante un
+Gtk.EventControllerKey en fase CAPTURE. No se registran atajos del sistema Xfce ni
+se modifica su configuración. La caja de texto conserva sus teclas de edición.
+
+| Tecla | Contexto | Acción |
+| --- | --- | --- |
+| Ctrl+F | Cualquier panel | Foco en búsqueda y selección de todo su texto |
+| / | Fuera de un campo editable | Igual que Ctrl+F; en búsqueda se escribe normalmente |
+| Abajo / Arriba | Búsqueda o resultados | Selecciona e inspecciona el siguiente/anterior resultado; cruza páginas si hace falta |
+| Abajo / Arriba | Backlinks o salientes | Recorre enlaces de esa sección sin abrirlos aún |
+| Enter / Enter numérico | Resultados | Inspecciona el resultado enfocado |
+| Enter / Enter numérico | Backlinks | Abre la nota fuente del backlink enfocado |
+| Enter / Enter numérico | Salientes | Abre destino resuelto; roto/ambiguo/externo muestra aviso y mantiene la nota |
+| Enter | Búsqueda | Abre el resultado seleccionado o el primero si no había selección |
+| Tab | Cualquier panel | Búsqueda → resultados → backlinks → salientes → avisos → navegación → búsqueda |
+| Shift+Tab | Cualquier panel | Recorre esos grupos en orden inverso |
+| Izquierda / Derecha | Grupo de navegación | Recorre Atrás, Actualizar y botones de página habilitados |
+| Enter / Espacio | Botón de navegación | Activación nativa de GTK |
+| Alt+Izquierda | Cualquier panel | Atrás en el historial |
+| Backspace | Fuera de un campo editable | Atrás; al editar conserva el borrado normal |
+| AvPág / RePág | Resultados | Página siguiente/anterior |
+| Ctrl+AvPág / Ctrl+RePág | Cualquier panel | Página siguiente/anterior y foco en resultados |
+| Escape | Hay texto en búsqueda | Limpia consulta y vuelve a búsqueda, sin cerrar |
+| Escape | Consulta vacía y foco fuera de búsqueda | Vuelve a búsqueda |
+| Escape | Consulta vacía y foco en búsqueda | Cierra la ventana |
+
+Al entrar con Tab en una sección se cambia su pestaña y se enfoca su primer enlace
+(o el enlace cuyo cursor ya estaba seleccionado); sin enlaces se enfoca el panel.
+Los enlaces rotos y ambiguos se pueden recorrer para leer su contexto; Enter nunca
+inventa un destino. Las notas elegidas se identifican por UUID. Atrás restaura la
+nota previa, pero no modifica la consulta ni cambia a la página de resultados donde
+aparecía: si está fuera de la página actual no hay un resultado resaltado.
+
+El texto de búsqueda no se vuelve a seleccionar al refrescar datos. Solo Ctrl+F y
+/ piden explícitamente seleccionar todo. El render conserva foco y caret, no destruye
+los resultados cuando solo cambia la ficha y mantiene el botón de navegación que
+seguía enfocado si aún está habilitado. El resultado activo tiene borde café además
+del foco nativo. La navegación de flechas no pasa por el debounce de búsqueda.
+
+### Límites y trabajo pendiente
+
+```bash
+PYTHONPATH=src .venv/bin/python -m trama_core ui .demo/espacio --backend gtk --query cafe --page-size 50
+PYTHONPATH=src .venv/bin/python -m trama_core ui .demo/espacio --backend snapshot --query cafe --page-size 10
+PYTHONPATH=src .venv/bin/python -m trama_core ui .demo/espacio --backend tui --query cafe --page-size 10
+```
+
+--page-size acepta enteros 1..100 y se valida antes de arrancar GTK. El indicador
+muestra `Mostrando 1–50 de 137 resultados`; botones Página anterior/siguiente se
+deshabilitan en los extremos. Una nueva consulta comienza en offset 0. Cambiar de
+página selecciona el primer resultado; flechas que cruzan un límite conservan el
+orden global y seleccionan el vecino. En los extremos se queda en el último/primer
+resultado. Una consulta vacía o sin coincidencias muestra 0–0 y no mueve selección.
+La paginación usa el contrato v1 existente: sin cambios de esquema SQLite/manifiesto.
+
+El presentador tiene como máximo una página, historial de 100 entradas y cursores
+por sección. GTK crea como máximo page-size botones de resultado y recicla la vista
+solo cuando cambia la respuesta de búsqueda. Un único worker procesa las operaciones;
+la cola tiene como máximo 16 pendientes más una en ejecución. Búsquedas/focos
+consecutivos pendientes se reemplazan por el más reciente; deltas de flechas se
+suman y se resuelven en un salto, sin abrir cada nota intermedia de una repetición
+rápida. Una cola llena muestra aviso y no acepta otra acción hasta tener espacio.
+Las llamadas al contrato permanecen fuera del hilo GTK. Estos son límites de
+estructura verificados; no equivalen a una medición de RSS, CPU o latencia.
+
+El inspector sigue cargando el payload completo de enlaces que ofrece el contrato;
+no se virtualizó ese panel en este incremento. Para grafos muy densos sigue siendo
+necesario medir y evaluar paginación de enlaces. Tampoco hay watcher: indexar entre
+páginas puede cambiar total y orden, como establece el contrato de lectura.
+
+### Controlador compartido y terminal
+
+Presenter acepta page_size y añade estado `page_size`, `offset`, `result_cursor`,
+`link_cursors`, `focus` y `close_requested`. Son campos aditivos de snapshot UI v1,
+no cambios de ui_contract v1. Métodos compartidos: select_result, move_result,
+change_page, set_focus/cycle_focus, move_link/activate y escape. No consultan SQLite
+directamente. El snapshot permite comprobar todo ese estado sin un servidor gráfico.
+
+TUI añade /siguiente, /anterior, /abajo, /arriba, /foco PANEL, /tab, /shift-tab,
+/enlace-abajo, /enlace-arriba, /enter y /escape, además de los comandos previos.
+Los nombres PANEL son search, results, backlinks, outgoing_links, health, navigation.
+El cursor de enlaces no abre documentos hasta /enter. /abajo y /arriba seleccionan
+resultados e inspeccionan inmediatamente. Snapshot sigue siendo una salida única;
+el historial y las acciones sucesivas se prueban con Presenter o TUI.
+
+### Evidencia de teclado
+
+La suite incluye una prueba GTK real que emite key-pressed en el controlador unido
+a una ventana mapeada. Verifica foco, selección de texto, flechas, paginación,
+Tab/Shift+Tab, Enter en un backlink, Alt+Izquierda y Escape, con avisos de GTK/Python
+tratados como errores. Comprueba además que 200 búsquedas pendientes se agrupan,
+que el botón de resultado se conserva al inspeccionar y que refrescar no roba la
+selección/caret ni el foco de navegación. Las pruebas comparan todos los bytes del
+espacio. Se verificó una colección de 137 notas con páginas 50/50/37 e historial
+acotado. No es una prueba de pulsaciones físicas en Arch/Xfce ni de lectores de pantalla.
+
+Para probar en local: abrir con el comando GTK anterior, Ctrl+F y escribir una
+palabra; Abajo entra en resultados y otra flecha cambia la ficha. Tab lleva a
+backlinks; Enter abre la fuente y Alt+Izquierda vuelve. Continuar con Tab a salientes
+y avisos; / vuelve al buscador. Probar AvPág/RePág con una colección que supere el
+límite. Escape limpia la consulta y, desde búsqueda vacía, vuelve a cerrar.

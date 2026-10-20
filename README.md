@@ -100,3 +100,17 @@ pruebas anteriores. Para la suite completa sin pantalla física:
 . scripts/gtk-env.sh
 xvfb-run -a dbus-run-session -- env GTK_A11Y=none GSK_RENDERER=cairo G_DEBUG=fatal-warnings PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v
 ```
+
+
+Ergonomía de escritorio (incremento 6):
+
+```bash
+PYTHONPATH=src .venv/bin/python -m trama_core ui .demo/espacio --backend gtk --query cafe --page-size 50
+```
+
+Ctrl+F o / fuera de edición enfoca la búsqueda; flechas seleccionan resultados,
+Tab/Shift+Tab recorren paneles, Enter abre un enlace y Alt+Izquierda vuelve. AvPág y
+RePág cambian de página desde resultados. Escape limpia y, en búsqueda vacía, cierra.
+La lista muestra el rango de resultados, máximo 50 por defecto (configurable 1..100).
+[Tabla completa de atajos y límites](docs/ui-window.md). Snapshot y TUI aceptan
+--page-size; el controlador conserva cursores e historial limitado sin escribir notas.

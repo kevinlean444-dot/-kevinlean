@@ -2,7 +2,7 @@
 import json
 import sys
 
-from . import Presenter, link_text, notices, status_text
+from . import Presenter, link_text, notices, status_text, page_text
 
 
 def plain(text):
@@ -13,7 +13,7 @@ def render(snapshot):
     lines = ['Trama · solo lectura', status_text(snapshot['status']), *notices(snapshot)]
     search = snapshot['search']
     if search and search['ok']:
-        lines.append(f"Búsqueda: {snapshot['query']} · {search['data']['total']} resultados")
+        lines.append(f"Búsqueda: {snapshot['query']} · {page_text(snapshot)}")
         for n, row in enumerate(search['data']['results']):
             lines.append(f"  {n}: {row['title']} · {row['rel_path']} · {row['uuid']}\n{row['snippet']}")
     inspect = snapshot['inspection']
@@ -30,8 +30,8 @@ def render(snapshot):
     return plain('\n'.join(lines))
 
 
-def run(workspace, query='', select=None, *, snapshot=False):
-    controller = Presenter(workspace)
+def run(workspace, query='', select=None, *, snapshot=False, page_size=50):
+    controller = Presenter(workspace, page_size=page_size)
     controller.refresh(query=query, select=select)
     if snapshot:
         print(json.dumps(controller.snapshot(), ensure_ascii=False, indent=2))
@@ -39,7 +39,7 @@ def run(workspace, query='', select=None, *, snapshot=False):
     print(render(controller.snapshot()))
     if not sys.stdin.isatty():
         return 0 if all(r is None or r['ok'] for r in (controller.state[k] for k in ('status', 'search', 'inspection'))) else 1
-    print('/buscar TEXTO · /abrir UUID|RUTA · /resultado N · /entrada N · /salida N · /atras · /estado · /salir')
+    print('/buscar TEXTO · /abrir UUID|RUTA · /resultado N · /entrada N · /salida N · /atras · /siguiente · /anterior · /abajo · /arriba · /foco PANEL · /tab · /shift-tab · /enlace-abajo · /enlace-arriba · /enter · /escape · /estado · /salir')
     while True:
         try:
             text = input('trama> ').strip()
@@ -60,9 +60,25 @@ def run(workspace, query='', select=None, *, snapshot=False):
                     position = int(argument)
                     if not 0 <= position < len(response['data']['results']):
                         raise ValueError('Resultado fuera de rango')
-                    controller.select(response['data']['results'][position]['uuid'])
+                    controller.select_result(position)
             elif command in ('/entrada', '/salida'):
                 controller.navigate('backlinks' if command == '/entrada' else 'outgoing_links', int(argument))
+            elif command in ('/siguiente', '/anterior'):
+                controller.change_page(1 if command == '/siguiente' else -1)
+            elif command in ('/abajo', '/arriba'):
+                controller.move_result(1 if command == '/abajo' else -1)
+            elif command == '/foco':
+                controller.set_focus(argument)
+            elif command in ('/tab', '/shift-tab'):
+                controller.cycle_focus(command == '/shift-tab')
+            elif command in ('/enlace-abajo', '/enlace-arriba'):
+                controller.move_link(controller.state['focus'], 1 if command == '/enlace-abajo' else -1)
+            elif command == '/enter':
+                controller.activate()
+            elif command == '/escape':
+                controller.escape()
+                if controller.state['close_requested']:
+                    break
             elif command == '/atras':
                 controller.back()
             elif command == '/estado':
