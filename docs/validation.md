@@ -205,3 +205,48 @@ conexiones de tres fixtures antiguas con contextlib.closing; no se desactivó ni
 advertencia ni prueba. No se midió RSS/CPU ni se abrió un editor gráfico externo
 real: se verificó su argv y el rechazo de rutas mediante inyector y dry-run.
 La detección modified se basa en metadatos, no demuestra igualdad de contenido.
+
+
+Incremento 8 — notas nativas y verificación SHA-256
+
+Seis pruebas nuevas en test_native_notes.py, manteniendo las 55 anteriores:
+
+- CLI new con título Unicode, comillas/dos puntos YAML, UUIDv4, indexación por
+  frontmatter, búsqueda y --open con editor dry-run. Repetir la ruta devuelve 1
+  y already_exists, conservando bytes del archivo, manifiesto e índice.
+- Controlador: creación en subcarpeta existente, selección del UUID nuevo,
+  identidad frontmatter e historial Atrás; reindexación no modifica ninguna nota.
+- Rechazo de archivos existentes, symlinks finales/colgantes y directorios symlink,
+  rutas absolutas, .., componentes ocultos, padres ausentes y caracteres de control.
+  Un flock ocupado impide la creación; estado y documento importado quedan intactos.
+- Fallo de publicación inyectado: el archivo nuevo se conserva y una indexación
+  posterior recupera su UUID desde frontmatter, sin modificar sus bytes.
+- Inspector: stat idéntico no lee el documento; touch verifica hash igual sin
+  alarma; cambio de texto (incluso mismo tamaño) produce content_modified=true.
+  No se modifica el índice al refrescar y un archivo mayor de 2 MiB no se lee.
+- GTK real: Ctrl+N abre el diálogo, activar la entrada (Enter) crea e indexa la
+  nota, que aparece en resultados y seleccionada en inspector. Ctrl+R tras touch
+  muestra información neutra de contenido idéntico. El documento importado queda
+  byte a byte intacto. Se exige stderr vacío con avisos GTK/Python fatales.
+
+Comando exacto ejecutado desde /workspace/-kevinlean:
+
+```bash
+. scripts/gtk-env.sh
+xvfb-run -a dbus-run-session -- env GTK_A11Y=none GSK_RENDERER=cairo G_DEBUG=fatal-warnings PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v > docs/test-output.txt 2>&1
+```
+
+Salida final real (log completo en test-output.txt):
+
+```text
+----------------------------------------------------------------------
+Ran 61 tests in 4.289s
+
+OK
+```
+
+No se instalaron dependencias. Gtk.Window modal evita Gtk.Dialog.add_button, que
+el entorno GTK 4.18 marca obsoleto; no se suprimieron advertencias. No se midieron
+RSS/CPU ni se probó un editor gráfico real. La creación y publicación del índice
+no son una transacción conjunta con el documento: ante fallo se conserva el nuevo
+archivo y se informa de la recuperación, como se detalla en data-format.md.

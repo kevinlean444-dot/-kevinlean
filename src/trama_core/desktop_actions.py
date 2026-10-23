@@ -1,4 +1,4 @@
-"""Comandos explícitos de escritorio; nunca se escribe contenido de documentos."""
+"""Recarga y apertura explícitas; la creación nativa vive en notes.py."""
 import os
 import json
 from pathlib import Path

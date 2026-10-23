@@ -1,13 +1,13 @@
 # Ventana mínima de Trama · incremento 5
 
-Ventana real GTK 4 de solo lectura, más TUI y snapshot. Consume exclusivamente el
+Ventana real GTK 4 con lectura y creación explícita de notas nuevas, más TUI y snapshot. Consume exclusivamente el
 [contrato UI v1](ui-contract.md). No indexa automáticamente, no escribe documentos,
 solo abre archivos locales mediante una acción explícita, no instala paquetes al arrancar y no necesita cuenta ni privilegios.
 
 ## Arquitectura
 
 `trama_core.ui.Presenter` conserva status, query/search, inspection, UUID seleccionado,
-historial y avisos. Solo llama a `ui_contract.status`, `search` e `inspect_document`.
+historial y avisos. Lee mediante `ui_contract.status`, `search` e `inspect_document`; las acciones explícitas usan servicios de comandos.
 Las vistas no abren SQLite ni los documentos para enriquecer el resultado. Un snapshot
 es una copia del estado, con `ui_version=1`; los tres payloads interiores mantienen
 sus envolturas del contrato v1. El historial no se persiste.
@@ -290,8 +290,9 @@ Izquierda/Derecha los recorre. Los botones de páginas de enlaces también se pu
 activar con ratón o activación nativa cuando tienen foco; AvPág/RePág es el acceso
 directo de teclado dentro de sus paneles.
 
-Actualizar no indexa. El inspector consulta stat y muestra `Archivo modificado en
-disco; reindexa para actualizar los enlaces` si cambiaron sus metadatos. missing,
+Actualizar no indexa. Si cambian metadatos, el inspector verifica SHA-256 y muestra
+`Archivo modificado en disco; reindexa para actualizar los enlaces` solo si cambia
+el contenido. Un touch muestra información neutra de contenido idéntico. missing,
 unsafe, unreadable o unknown se muestran también como avisos. Para registros
 anteriores sin mtime_ns se necesita una indexación inicial que capture ese dato.
 No se leen contenidos desde la ficha; las posiciones siguen siendo las del índice.
@@ -357,3 +358,36 @@ páginas independientes, modificación simulada del usuario, Ctrl+R (aviso modif
 Ctrl+Shift+R (índice al día) y Ctrl+O dry-run. Se comparan bytes de todos los originales,
 salvo el cambio deliberado de la fixture realizado para simular al usuario. No se
 mide RSS/CPU ni se afirma compatibilidad de editores externos concretos.
+
+
+## Incremento 8 · notas nativas y verificación de contenido
+
+| Acción | Teclado / interacción |
+| --- | --- |
+| Nueva nota | Ctrl+N o botón Nueva nota |
+| Crear | Escribir título o ruta relativa.md y Enter / Crear |
+| Cancelar | Escape, Cancelar o cerrar la ventana modal |
+
+El diálogo usa Gtk.Window modal, Gtk.Entry y botones, sin las APIs obsoletas de
+Gtk.Dialog. Tab recorre sus controles. El campo recibe foco inmediatamente;
+Enter activa Crear. Los demás atajos continúan en la tabla anterior. La nueva nota
+se crea/indexa en el único worker; al terminar la búsqueda usa su título y el
+inspector selecciona su UUID. Atrás permite volver a la nota anterior. Los errores
+se muestran en la barra de avisos; no se sobrescribe ningún archivo.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m trama_core new .demo/espacio 'Mi primera nota'
+PYTHONPATH=src .venv/bin/python -m trama_core new .demo/espacio 'Otra nota.md' --open --editor-dry-run --editor 'editor-simulado --new-window'
+PYTHONPATH=src .venv/bin/python -m trama_core ui .demo/espacio --backend gtk
+```
+
+Crear cada ruta una sola vez: repetir devuelve already_exists. Los directorios padres
+deben existir; las rutas absolutas, ocultas, con .. o symlinks no son destinos válidos.
+TUI ofrece `/nueva Título o ruta.md`; snapshot no crea nada automáticamente.
+La creación nativa no añade editor integrado: el texto posterior se edita con el
+programa externo mediante Ctrl+O. La indexación mantiene inmutables las importadas.
+
+Ctrl+R/F5 vuelve a consultar la nota: si difieren los metadatos, el contrato verifica
+su hash con límite 2 MiB en el worker. metadata_only se presenta como información
+neutra; modified como advertencia; changing/too_large no afirman igualdad.
+No se garantiza detectar una edición que preserve todos los metadatos observados.

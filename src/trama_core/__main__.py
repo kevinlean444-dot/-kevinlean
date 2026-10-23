@@ -11,6 +11,12 @@ from . import ui_contract
 def main():
     parser = argparse.ArgumentParser(description="Índice local de Trama")
     sub = parser.add_subparsers(dest="command", required=True)
+    new = sub.add_parser('new', help='Crear exclusivamente una nota nativa e indexarla')
+    new.add_argument('workspace')
+    new.add_argument('name', help='Título o ruta relativa .md; padres existentes')
+    new.add_argument('--open', action='store_true', dest='open_editor')
+    new.add_argument('--editor')
+    new.add_argument('--editor-dry-run', action='store_true')
     for name in ("index", "search", "backlinks", "graph", "conflicts", "resolve"):
         p = sub.add_parser(name)
         p.add_argument("workspace", help="Directorio explícito del espacio")
@@ -41,7 +47,7 @@ def main():
     inspect_view.add_argument("--backlinks-offset", type=int, default=0)
     inspect_view.add_argument("--outgoing-offset", type=int, default=0)
     modes.add_parser("status")
-    ui = sub.add_parser("ui", help="Ventana GTK 4 de solo lectura o terminal")
+    ui = sub.add_parser("ui", help="Ventana GTK 4 o terminal; creación nativa explícita")
     ui.add_argument("workspace")
     ui.add_argument("--backend", choices=("auto", "gtk", "tui", "snapshot"), default="auto")
     ui.add_argument("--query", default="")
@@ -53,6 +59,15 @@ def main():
     ui.add_argument("--smoke-test", action="store_true")
     args = parser.parse_args()
     try:
+        if args.command == 'new':
+            from .notes import create_note
+            from .desktop_actions import open_document
+            result = create_note(args.workspace, args.name)
+            if result['ok'] and args.open_editor:
+                result['external_action'] = open_document(args.workspace, result['uuid'], command=args.editor, dry_run=args.editor_dry_run)
+                result['ok'] = result['external_action']['ok']
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result['ok'] else 1
         if args.command == "ui":
             from .ui.launcher import run
             return run(args.workspace, backend=args.backend, query=args.query, select=args.select, smoke_test=args.smoke_test, page_size=args.page_size, link_page_size=args.link_page_size, editor=args.editor, editor_dry_run=args.editor_dry_run)

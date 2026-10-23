@@ -100,3 +100,11 @@ real, y validar el comportamiento con editores externos instalados por el usuari
 
 Roadmap posterior: núcleo fiable → ventana mínima de búsqueda/backlinks → integración
 Xfce → evaluación de distribución Arch. Sin promesas de rendimiento o compatibilidad.
+
+
+Incremento 8 añade notes.py como servicio de creación nativa explícita (CLI, GTK y
+TUI); reemplaza la restricción histórica de UI exclusivamente lectora para esta única
+acción. Mantiene flock EX durante validación previa, creación O_EXCL sin symlinks
+y publicación recuperable. No modifica archivos existentes ni introduce editor.
+El inspector sigue siendo lector: solo si cambian metadatos verifica SHA-256 acotado
+en el worker, sin reindexar automáticamente. ui-contract.md define los nuevos campos.

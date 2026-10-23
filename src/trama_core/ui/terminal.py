@@ -41,7 +41,7 @@ def run(workspace, query='', select=None, *, snapshot=False, page_size=50, link_
     print(render(controller.snapshot()))
     if not sys.stdin.isatty():
         return 0 if all(r is None or r['ok'] for r in (controller.state[k] for k in ('status', 'search', 'inspection'))) else 1
-    print('/buscar TEXTO · /abrir UUID|RUTA · /resultado N · /entrada N · /salida N · /atras · /siguiente · /anterior · /abajo · /arriba · /foco PANEL · /tab · /shift-tab · /enlace-abajo · /enlace-arriba · /enter · /escape · /enlaces-siguiente · /enlaces-anterior · /reindexar · /abrir-editor · /estado · /salir')
+    print('/buscar TEXTO · /abrir UUID|RUTA · /resultado N · /entrada N · /salida N · /atras · /siguiente · /anterior · /abajo · /arriba · /foco PANEL · /tab · /shift-tab · /enlace-abajo · /enlace-arriba · /enter · /escape · /enlaces-siguiente · /enlaces-anterior · /nueva TÍTULO|RUTA · /reindexar · /abrir-editor · /estado · /salir')
     while True:
         try:
             text = input('trama> ').strip()
@@ -85,6 +85,8 @@ def run(workspace, query='', select=None, *, snapshot=False, page_size=50, link_
                 controller.back()
             elif command in ('/enlaces-siguiente', '/enlaces-anterior'):
                 controller.change_link_page(controller.state['focus'], 1 if command == '/enlaces-siguiente' else -1)
+            elif command == '/nueva':
+                controller.create_note(argument)
             elif command == '/reindexar':
                 controller.reindex()
             elif command == '/abrir-editor':

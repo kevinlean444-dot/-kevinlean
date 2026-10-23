@@ -1,6 +1,6 @@
 # Trama · núcleo 0.1
 
-Prototipo local con CLI, TUI y ventana GTK 4 opcional de solo lectura.
+Prototipo local con CLI, TUI y ventana GTK 4 opcional, con creación exclusiva de notas nativas.
 El núcleo usa Python >=3.11 con sqlite3/FTS5 y no requiere privilegios.
 La biblioteca estándar basta; no se necesita instalar el paquete para usar la CLI.
 
@@ -126,3 +126,13 @@ AvPág/RePág en backlinks o salientes cambia su página. Ctrl+R/F5 recarga, Ctr
 reindexa explícitamente con bloqueo y Ctrl+O abre el documento en editor externo
 (o muestra la orden si --editor-dry-run). El inspector avisa si el archivo cambió
 por metadatos y aún no se reindexó. [Acciones, seguridad y límites](docs/ui-window.md).
+
+
+Crear una nota nativa sin sobrescribir documentos existentes:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m trama_core new .demo/espacio 'Mi primera nota'
+```
+
+En GTK: Ctrl+N, escribir el título y Enter. Se asigna UUID en frontmatter y se indexa
+inmediatamente. Para notas importadas, la identidad continúa solo en el manifiesto.

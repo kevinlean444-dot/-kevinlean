@@ -1,8 +1,8 @@
 # Contrato de lectura de Trama · versión 1
 
 API Python en `trama_core.ui_contract`, solo biblioteca estándar. El frontend no
-abre SQLite ni altera notas. Solo el inspector consulta metadatos de disco con stat;
-el texto y los enlaces proceden del índice, no de releer Markdown. Todas las
+abre SQLite ni altera notas. El inspector consulta metadatos de disco y verifica SHA-256 si difieren;
+el texto mostrado y los enlaces siguen procediendo del índice. Todas las
 respuestas son objetos JSON; los nombres de campos siguientes forman el contrato.
 Versión de contrato 1, manifiesto 2, esquema SQLite 4 y grafo heredado 3 son números
 independientes. Campos nuevos incompatibles requerirán otra versión del contrato.
@@ -79,6 +79,7 @@ Se usa en la ficha y en cada resultado de búsqueda:
 | kind | `note` o `attachment` |
 | content_hash | string SHA-256 o null para histórico antiguo sin observación |
 | identity_origin | `frontmatter` o `manifest` según última indexación |
+| identity_source | alias de identity_origin, añadido en incremento 8 |
 | deleted | booleano del manifiesto |
 | indexed | booleano: documento activo presente en SQLite |
 | backlink_count | entero: documentos fuente distintos que tienen enlaces resueltos entrantes |
@@ -245,14 +246,28 @@ next_offset=null. Los offsets son independientes; la consulta utiliza una única
 transacción de lectura para los dos arrays y sus totales. No hay snapshot mantenido
 entre llamadas: reindexar puede cambiar el orden o total entre páginas.
 
-`disk_state` tiene exactamente state y modified. state pertenece a current,
-modified, unknown, missing, unsafe o unreadable. modified es false para current,
-true para modified y null para los demás. Se comparan size/device/inode/mtime_ns con
-los registrados al indexar, sin abrir el archivo para leer contenido. Un registro
-antiguo sin mtime_ns da unknown salvo que cambie otro metadato; reindexar lo completa.
-Un toque de mtime puede avisar aunque el texto sea idéntico; una edición que restaure
-todos los metadatos podría pasar inadvertida. No es una verificación de hash.
-Los symlinks de archivo y directorio se rechazan antes de consultar el destino.
+`disk_state` mantiene exactamente state y modified. Desde el incremento 8,
+state puede ser current, metadata_only, modified, unknown, missing, unsafe,
+unreadable, too_large o changing. modified es false en current/metadata_only,
+true en modified y null en los demás. Se comparan size/device/inode/mtime_ns.
+Si coinciden, no se lee contenido; si difieren, se lee como máximo MAX_BYTES+1
+(2 MiB + 1), se valida estabilidad de stat antes/después y se calcula SHA-256.
+Los symlinks se rechazan y un tamaño conocido superior al límite evita la lectura.
+
+inspect añade tres campos en data:
+
+- content_modified: true si SHA-256 difiere del registrado; false si se verificó
+  igualdad; null si no hubo verificación o no pudo completarse.
+- hash_verified: booleano; true solo tras una lectura estable y comparación.
+- current_hash: SHA-256 calculado, o null si no se leyó el archivo.
+
+Un touch con hash idéntico produce metadata_only/modified=false y no genera alarma
+de edición. current indica metadatos iguales, no prueba de igualdad de contenido:
+una edición que restaure todos los metadatos observados puede pasar inadvertida.
+changing evita afirmar igualdad si el archivo cambia durante la lectura; too_large
+respeta el límite sin calcular hash. No se releen todos los documentos del espacio.
+Un registro anterior sin mtime_ns sigue dando unknown si no cambió otro metadato.
+Para document=null los nuevos campos son null/false/null, respectivamente.
 
 Un archivo modificado no vuelve inválido el índice derivado del manifiesto: la
 respuesta sigue ok/ready, con el aviso disk_state=modified. index_stale se reserva
@@ -262,3 +277,19 @@ de reindexar. Ni refresh ni inspect escriben documentos o reindexan por sí solo
 Las acciones reindex_space y open_document viven en desktop_actions; son comandos
 explícitos separados de esta API de lectura. La primera llama a index bajo EX; la
 segunda valida la ruta y ejecuta argv sin shell. ui-window.md documenta sus opciones.
+
+
+## Creación explícita nativa · incremento 8
+
+La API de lectura conserva envoltura v1 y no crea notas. `notes.create_note(space,
+name)` es un comando separado bajo flock EX, compartido por CLI y Presenter.
+Devuelve ok/state/created/uuid/rel_path/error y, en éxito, title,
+identity_source=frontmatter y result con los contadores de indexación.
+Estados de error: busy, already_exists, create_error e index_error. created=true
+con ok=false informa de un archivo nuevo conservado tras fallo: revisar el archivo
+y reintentar index, sin recrearlo sobre la misma ruta. La apertura opcional del editor
+es otra acción; un fallo del editor no elimina una nota creada correctamente.
+
+Presenter.create_note(name) guarda creation_action en snapshot, actualiza el estado,
+busca el título y selecciona el UUID generado. Conserva el historial anterior.
+GTK ejecuta la creación en su worker; snapshot nunca escribe al arrancar.

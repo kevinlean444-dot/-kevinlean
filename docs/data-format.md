@@ -165,3 +165,46 @@ Incremento 7 añade mtime_ns opcional a cada registro observado al indexar. No c
 la identidad ni el hash; permite avisar de modificaciones por metadatos sin releer
 contenido desde el inspector. Un manifiesto anterior sigue siendo válido, con estado
 de disco unknown hasta reindexar si los demás metadatos siguen iguales.
+
+
+Incremento 8 — creación nativa exclusiva
+
+`new ESPACIO "Título o ruta relativa.md"` crea solo Markdown nuevo. Si falta .md,
+se añade; el título es el nombre final sin esa extensión. Los padres deben existir.
+Se rechazan rutas absolutas, .., componentes ocultos y caracteres de control.
+El frontmatter escrito es YAML compatible con escalares entre comillas JSON
+(Unicode, comillas y dos puntos escapados sin depender de un parser YAML):
+
+```yaml
+---
+id: 83094492-4130-47c3-8d34-4affcc48e155
+title: "Mi primera nota"
+---
+
+# Mi primera nota
+```
+
+Se genera UUIDv4; nunca se inyecta un ID en un archivo importado. El encabezado
+Markdown replica el título para el parser actual, que sigue sin ser YAML completo.
+El manifiesto v2 usa explicit_id=true, y el contrato ofrece
+identity_source=identity_origin=frontmatter. No cambian SQLite v4 ni grafo v3.
+
+Bajo un único flock EX se valida el estado previo sin publicarlo, se recorre el
+padre con descriptores O_DIRECTORY|O_NOFOLLOW, y se abre el destino con
+O_CREAT|O_EXCL|O_NOFOLLOW, modo 0600. Un archivo, directorio o symlink existente,
+incluso colgante, provoca error; nunca se trunca ni se sustituye. Tras escribir y
+sincronizar archivo/directorio, se prepara y publica el par índice/manifiesto con
+el protocolo pending ya documentado. No hay bloqueo anidado ni cambios a otras notas.
+La validación previa y la indexación posterior recorren el espacio con los límites
+habituales; crear una nota no es una actualización incremental del índice.
+
+El archivo nuevo y el estado derivado no forman una sola transacción. Si falla la
+escritura o indexación posterior, created=true/ok=false advierte que se conserva el
+archivo (posiblemente incompleto si falló la escritura); revisar su contenido y
+reintentar index. Nunca se borra una nota para ocultar un fallo. Una interrupción de
+publicación se recupera mediante pending; las identidades nativas se reconstruyen
+desde frontmatter. Las reglas de duplicados y resolución de IDs siguen vigentes.
+
+El inspector ahora compara SHA-256 cuando difieren los metadatos observados; touch
+sin cambio de bytes produce metadata_only y content_modified=false. No escribe
+los metadatos nuevos en el manifiesto: index explícito actualiza esa observación.

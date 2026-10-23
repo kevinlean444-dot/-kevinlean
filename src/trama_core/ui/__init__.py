@@ -1,4 +1,4 @@
-"""Presentador de solo lectura compartido por GTK y terminal."""
+"""Presentador compartido por GTK y terminal; escritura nativa solo explícita."""
 import copy
 
 from .. import ui_contract, desktop_actions
@@ -21,7 +21,7 @@ class Presenter:
                           status=None, search=None, inspection=None, notice='', page_size=page_size, offset=0,
                           result_cursor=-1, link_cursors={'backlinks': -1, 'outgoing_links': -1},
                           focus='search', close_requested=False, link_page_size=link_page_size,
-                          link_offsets={'backlinks': 0, 'outgoing_links': 0}, external_action=None, index_action=None)
+                          link_offsets={'backlinks': 0, 'outgoing_links': 0}, external_action=None, index_action=None, creation_action=None)
 
     def snapshot(self):
         return copy.deepcopy(self.state)
@@ -207,6 +207,18 @@ class Presenter:
         else:
             self.state['notice'] = self.state['index_action']['error']
         return self.snapshot()
+
+    def create_note(self, name):
+        from ..notes import create_note
+        result = create_note(self.workspace, name)
+        self.state['creation_action'] = result
+        if result['ok']:
+            self.refresh_status()
+            self.search(result['title'])
+            self.select(result['uuid'])
+            self.state['focus'] = 'results'
+        self.state['notice'] = 'Nota nativa creada e indexada' if result['ok'] else result['error']
+        return result['ok']
 
     def open_external(self, *, dry_run=None, runner=None):
         if not self.state['selected_uuid']:

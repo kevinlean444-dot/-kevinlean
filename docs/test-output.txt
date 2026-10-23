@@ -28,6 +28,12 @@ test_external_editor_argv_dry_run_and_environment (test_inspector_actions.Inspec
 test_external_editor_rejects_escape_missing_and_symlinks (test_inspector_actions.InspectorActionTests.test_external_editor_rejects_escape_missing_and_symlinks) ... ok
 test_file_changed_during_index_is_reported_instead_of_marked_current (test_inspector_actions.InspectorActionTests.test_file_changed_during_index_is_reported_instead_of_marked_current) ... ok
 test_modified_reload_and_explicit_reindex_with_lock (test_inspector_actions.InspectorActionTests.test_modified_reload_and_explicit_reindex_with_lock) ... ok
+test_ctrl_n_dialog_creates_and_selects_native_note (test_native_notes.GTKNativeNoteTests.test_ctrl_n_dialog_creates_and_selects_native_note) ... ok
+test_cli_native_creation_and_optional_editor_dry_run (test_native_notes.NativeNoteTests.test_cli_native_creation_and_optional_editor_dry_run) ... ok
+test_controller_selects_native_note_and_keeps_imports_immutable (test_native_notes.NativeNoteTests.test_controller_selects_native_note_and_keeps_imports_immutable) ... ok
+test_creation_rejects_existing_paths_escape_symlinks_and_busy_space (test_native_notes.NativeNoteTests.test_creation_rejects_existing_paths_escape_symlinks_and_busy_space) ... ok
+test_publication_failure_preserves_new_note_and_is_recoverable (test_native_notes.NativeNoteTests.test_publication_failure_preserves_new_note_and_is_recoverable) ... ok
+test_touch_vs_content_hash_and_read_limit (test_native_notes.NativeNoteTests.test_touch_vs_content_hash_and_read_limit) ... ok
 test_ambiguous_preview_apply_and_rebuild (test_resolution.ResolutionTests.test_ambiguous_preview_apply_and_rebuild) ... ok
 test_coexisting_files_rejected_unchanged (test_resolution.ResolutionTests.test_coexisting_files_rejected_unchanged) ... ok
 test_database_build_failure_keeps_original_state (test_resolution.ResolutionTests.test_database_build_failure_keeps_original_state) ... ok
@@ -55,6 +61,6 @@ test_search_selection_navigation_back_and_immutability (test_ui_presenter.Presen
 test_terminal_snapshot_and_tui_use_same_data (test_ui_presenter.PresenterTests.test_terminal_snapshot_and_tui_use_same_data) ... ok
 
 ----------------------------------------------------------------------
-Ran 55 tests in 2.708s
+Ran 61 tests in 4.289s
 
 OK

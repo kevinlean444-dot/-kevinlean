@@ -1,11 +1,12 @@
-"""Contrato JSON v1, sin GTK; contenido indexado y stat seguro de la nota seleccionada."""
+"""Contrato JSON v1, sin GTK; lectura indexada y verificación acotada de cambios."""
 from contextlib import closing
 import json
+import hashlib
 import stat
 from pathlib import Path
 import sqlite3
 
-from .core import manifest_digest
+from .core import manifest_digest, read_document, MAX_BYTES
 from .locking import RecoveryNeeded, SpaceBusy, space_lock
 
 __all__ = ['search', 'inspect_document', 'status']
@@ -81,6 +82,7 @@ def _document(db, manifest, identity):
     updates = db.execute('SELECT count(*) FROM links WHERE (source=? OR target=?) AND needs_update=1', (identity, identity)).fetchone()[0]
     return dict(**_brief(record, identity), kind=record.get('kind', 'note'),
                 content_hash=record.get('content_hash'), identity_origin='frontmatter' if record.get('explicit_id') else 'manifest',
+                identity_source='frontmatter' if record.get('explicit_id') else 'manifest',
                 deleted=bool(record.get('deleted')), indexed=indexed is not None and not indexed['deleted'],
                 backlink_count=backlinks, has_conflicts=bool(_conflicts(manifest, identity)), needs_update_count=updates)
 
@@ -122,22 +124,38 @@ def search(workspace, text, *, limit=20, offset=0):
 def _disk_state(workspace, record):
     root = Path(workspace).absolute()
     path = root / record['rel_path']
+    def result(state, modified=None, *, verified=False, digest=None):
+        return dict(disk_state=dict(state=state, modified=modified),
+                    content_modified=modified if verified else None,
+                    hash_verified=verified, current_hash=digest)
     try:
         if not path.is_relative_to(root) or any(p.is_symlink() for p in (path, *path.parents) if p.is_relative_to(root)) or not path.resolve().is_relative_to(root):
-            return dict(state='unsafe', modified=None)
+            return result('unsafe')
         info = path.stat(follow_symlinks=False)
         if not stat.S_ISREG(info.st_mode):
-            return dict(state='unsafe', modified=None)
+            return result('unsafe')
         if not info.st_mode & 0o444:
-            return dict(state='unreadable', modified=None)
+            return result('unreadable')
         changed = any(record.get(k) is not None and record[k] != value for k, value in
                       (('size', info.st_size), ('device', info.st_dev), ('inode', info.st_ino), ('mtime_ns', info.st_mtime_ns)))
-        state = 'modified' if changed else 'current' if record.get('mtime_ns') is not None else 'unknown'
-        return dict(state=state, modified=changed if state != 'unknown' else None)
+        if not changed:
+            return result('current', False) if record.get('mtime_ns') is not None else result('unknown')
+        if info.st_size > MAX_BYTES:
+            return result('too_large')
+        data = read_document(path)
+        after = path.stat(follow_symlinks=False)
+        attributes = ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
+        if any(getattr(info, k) != getattr(after, k) for k in attributes) or len(data) != after.st_size:
+            return result('changing')
+        digest = hashlib.sha256(data).hexdigest()
+        if not record.get('content_hash'):
+            return result('unknown', digest=digest)
+        modified = digest != record['content_hash']
+        return result('modified' if modified else 'metadata_only', modified, verified=True, digest=digest)
     except FileNotFoundError:
-        return dict(state='missing', modified=None)
-    except OSError:
-        return dict(state='unreadable', modified=None)
+        return result('missing')
+    except (OSError, ValueError):
+        return result('unreadable')
 
 
 def _link_page(db, column, identity, limit, offset):
@@ -166,7 +184,7 @@ def inspect_document(workspace, document, *, link_limit=50, backlinks_offset=0, 
             if not matches:
                 errors = [dict(r) for r in db.execute('SELECT * FROM errors WHERE path=? ORDER BY error', (document,))]
                 if errors:
-                    return dict(document=None, backlinks=[], outgoing_links=[], link_pages=pages, disk_state=None, health=dict(errors=errors, conflicts=[], historical_reference_count=0))
+                    return dict(document=None, backlinks=[], outgoing_links=[], link_pages=pages, disk_state=None, content_modified=None, hash_verified=False, current_hash=None, health=dict(errors=errors, conflicts=[], historical_reference_count=0))
                 raise ContractError('not_found', 'Documento no registrado', 'choose_document')
             identity = matches[0]
         paths = {records[identity]['rel_path'], *records[identity].get('previous_paths', [])}
@@ -175,7 +193,7 @@ def inspect_document(workspace, document, *, link_limit=50, backlinks_offset=0, 
         pages['outgoing_links'] = _link_page(db, 'source', identity, link_limit, outgoing_offset)
         return dict(document=_document(db, manifest, identity), backlinks=_link_rows(db, manifest, 'target', identity, link_limit, backlinks_offset),
                     outgoing_links=_link_rows(db, manifest, 'source', identity, link_limit, outgoing_offset),
-                    link_pages=pages, disk_state=_disk_state(workspace, records[identity]),
+                    link_pages=pages, **_disk_state(workspace, records[identity]),
                     health=dict(errors=errors, conflicts=_conflicts(manifest, identity),
                                 historical_reference_count=sum(v == identity for v in manifest['bindings'].values())))
     return _respond(workspace, 'inspect', perform)

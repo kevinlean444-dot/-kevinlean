@@ -52,6 +52,7 @@ class Window(Gtk.ApplicationWindow):
         self.focus_after_update = 'search'
         self.rendered_search = object()
         self.rendered_inspection = object()
+        self.rendered_creation = None
         self.debounce = None
         self.snapshot = None
         self.worker_error = None
@@ -80,6 +81,11 @@ class Window(Gtk.ApplicationWindow):
         self.open_button = Gtk.Button(label='Abrir editor', sensitive=False)
         self.open_button.connect('clicked', lambda _: self.submit('open_external'))
         header.pack_end(self.open_button)
+        self.new_button = Gtk.Button(label='Nueva nota')
+        self.new_button.set_tooltip_text('Crear una nota nativa · Ctrl+N')
+        self.new_button.connect('clicked', lambda _: self.show_new_note())
+        header.pack_start(self.new_button)
+        self.creation_dialog = None
         self.set_titlebar(header)
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.banner = label(css='warning')
@@ -156,6 +162,50 @@ class Window(Gtk.ApplicationWindow):
         self.key_controller.connect('key-pressed', self.key_pressed)
         self.add_controller(self.key_controller)
         self.submit('refresh', query=query, select=select)
+
+    def show_new_note(self):
+        if self.creation_dialog is not None:
+            self.creation_dialog.present()
+            return
+        dialog = Gtk.Window(title='Nueva nota nativa', transient_for=self, modal=True)
+        dialog.set_default_size(420, 140)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        for side in ('start', 'end', 'top', 'bottom'):
+            getattr(box, 'set_margin_' + side)(16)
+        entry = Gtk.Entry(placeholder_text='Título o ruta relativa.md')
+        box.append(entry)
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        cancel = Gtk.Button(label='Cancelar')
+        confirm = Gtk.Button(label='Crear')
+        buttons.append(cancel)
+        buttons.append(confirm)
+        box.append(buttons)
+        dialog.set_child(box)
+        dialog.set_default_widget(confirm)
+        self.creation_dialog, self.creation_entry, self.creation_confirm = dialog, entry, confirm
+        def finish(create=False):
+            name = entry.get_text()
+            self.creation_dialog = None
+            dialog.destroy()
+            if create:
+                self.submit('create_note', name)
+        cancel.connect('clicked', lambda _: finish())
+        confirm.connect('clicked', lambda _: finish(True))
+        entry.connect('activate', lambda _: finish(True))
+        def close_request(_):
+            finish()
+            return True
+        dialog.connect('close-request', close_request)
+        keys = Gtk.EventControllerKey()
+        def key_pressed(_, keyval, keycode, modifiers):
+            if keyval == Gdk.KEY_Escape:
+                finish()
+                return True
+            return False
+        keys.connect('key-pressed', key_pressed)
+        dialog.add_controller(keys)
+        dialog.present()
+        entry.grab_focus()
 
     def submit(self, operation, *args, **kwargs):
         if self.closed:
@@ -250,6 +300,9 @@ class Window(Gtk.ApplicationWindow):
         if keyval == Gdk.KEY_F5 or (control and keyval in (Gdk.KEY_r, Gdk.KEY_R)):
             self.submit('reindex' if control and shift and keyval in (Gdk.KEY_r, Gdk.KEY_R) else 'refresh')
             return True
+        if control and keyval in (Gdk.KEY_n, Gdk.KEY_N):
+            self.show_new_note()
+            return True
         if control and keyval in (Gdk.KEY_o, Gdk.KEY_O):
             self.submit('open_external')
             return True
@@ -266,7 +319,7 @@ class Window(Gtk.ApplicationWindow):
             self.submit('set_focus', target)
             return True
         if group == 'navigation' and keyval in (Gdk.KEY_Left, Gdk.KEY_Right):
-            buttons = [button for button in (self.back_button, self.refresh_button, self.reindex_button, self.open_button, self.previous_page, self.next_page) if button.get_sensitive()]
+            buttons = [button for button in (self.back_button, self.refresh_button, self.reindex_button, self.open_button, self.new_button, self.previous_page, self.next_page) if button.get_sensitive()]
             current = next((i for i, button in enumerate(buttons) if button == focus or (focus and focus.is_ancestor(button))), 0)
             buttons[(current + (1 if keyval == Gdk.KEY_Right else -1)) % len(buttons)].grab_focus()
             return True
@@ -319,6 +372,12 @@ class Window(Gtk.ApplicationWindow):
         self.debounce = GLib.timeout_add(200, search)
 
     def render(self, snapshot):
+        creation = snapshot.get('creation_action')
+        if creation and creation['ok'] and creation['uuid'] != self.rendered_creation:
+            self.rendered_creation = creation['uuid']
+            self.focus_after_update = 'results'
+            if self.search_entry.get_text() != snapshot['query']:
+                self.search_entry.set_text(snapshot['query'])
         messages = notices(snapshot)
         self.banner.set_text('\n'.join(messages))
         self.banner.set_visible(bool(messages))
@@ -342,7 +401,7 @@ class Window(Gtk.ApplicationWindow):
                 button.add_css_class('selected-result')
             else:
                 button.remove_css_class('selected-result')
-        if group == 'navigation' and previous_focus in (self.back_button, self.refresh_button, self.reindex_button, self.open_button, self.previous_page, self.next_page) and previous_focus.get_sensitive():
+        if group == 'navigation' and previous_focus in (self.back_button, self.refresh_button, self.reindex_button, self.open_button, self.new_button, self.previous_page, self.next_page) and previous_focus.get_sensitive():
             previous_focus.grab_focus()
         else:
             self.focus_panel(group)
@@ -428,9 +487,14 @@ class Window(Gtk.ApplicationWindow):
                     self.outgoing_buttons.append(button)
         disk = data.get('disk_state')
         if disk and disk['state'] != 'current':
-            message = 'Archivo modificado en disco; reindexa para actualizar los enlaces' if disk['state'] == 'modified' else 'Estado del archivo en disco: ' + disk['state']
+            if disk['state'] == 'metadata_only':
+                message = 'Metadatos actualizados; contenido idéntico (SHA-256 verificado)'
+            elif disk['state'] == 'modified':
+                message = 'Archivo modificado en disco; reindexa para actualizar los enlaces'
+            else:
+                message = 'Estado del archivo en disco: ' + disk['state']
             self.metadata_label.set_text(self.metadata_label.get_text() + '\n' + message)
-            self.health_box.append(label(message, css='warning'))
+            self.health_box.append(label(message, css='muted' if disk['state'] == 'metadata_only' else 'warning'))
         health = data['health']
         for error in health['errors']:
             self.health_box.append(label(f"{error['path']}: {error['error']}", css='warning'))
@@ -440,6 +504,9 @@ class Window(Gtk.ApplicationWindow):
             self.health_box.append(label('Sin errores de indexación ni conflictos para esta nota.'))
 
     def on_close(self, *_):
+        if self.creation_dialog is not None:
+            self.creation_dialog.destroy()
+            self.creation_dialog = None
         self.closed = True
         self.jobs.clear()
         if self.debounce:
