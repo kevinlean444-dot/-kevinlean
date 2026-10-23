@@ -59,7 +59,7 @@ el primero según recorrido ordenado, se excluye el segundo; resolver manualment
 Migración v1 → v2 automática durante indexación, manteniendo UUID por ruta. Una
 migración con varias rutas para el mismo UUID se rechaza antes de escribir estado,
 pues no permite distinguir traslado de colisión con seguridad. SQLite se reconstruye
-transaccionalmente con user_version=3; ejecutar index antes de consultar índices antiguos.
+transaccionalmente con user_version=4; ejecutar index antes de consultar índices antiguos.
 
 `bindings` guarda `[UUID fuente, texto del enlace]` serializado como clave → UUID
 destino. La resolución actual por ruta/título tiene prioridad. Si no hay destino
@@ -135,7 +135,7 @@ no se fuerza una elección distinta de las reglas habituales. Las otras candidat
 conservan sus identidades. Los conflictos cuyo id es OLD_UUID salen de `conflicts`
 y se archivan en `resolutions`: `{id, retired_id, old_path, rel_path,
 resolved_conflicts}`. Los registros de auditoría no son nodos consultables. El
-manifiesto sigue en versión 2 y SQLite/grafo en 3, sin migración nueva necesaria.
+manifiesto sigue en versión 2 y SQLite en 4 y grafo en 3, sin migración nueva necesaria.
 
 Publicación recuperable del estado
 
@@ -148,7 +148,63 @@ siguiente comando completa ambos reemplazos pendientes antes de exponer estado.
 Se verifican symlinks/hardlinks de todos los archivos de estado, incluidos temporales.
 No borrar estos archivos manualmente durante recuperación. Esto ofrece recuperación
 ante interrupción entre reemplazos, no una transacción entre archivos para lectores
-externos que omitan la CLI. Tampoco ofrece bloqueo multiproceso: ejecutar una sola
-operación por espacio y no cambiar documentos concurrentemente. Una vista previa
+externos que omitan la CLI. El incremento 4 protege comandos públicos con flock por espacio (EX para escritores,
+SH para lectores), como se detalla en docs/ui-contract.md. No cambiar documentos
+externamente durante la indexación. Una vista previa
 normal no escribe nada; si encuentra una aplicación previa interrumpida, primero
 termina esa recuperación pendiente, como cualquier otro comando.
+
+
+Extensión del índice en incremento 4: SQLite user_version=4 incluye `metadata`
+(key/value con manifest_digest) y `link_locations` (position/line/context). El
+manifiesto permanece en v2, el grafo heredado en v3 y el nuevo contrato UI en v1.
+Reindexar actualiza índices anteriores sin modificar originales. El archivo .lock
+es estado de coordinación permanente, no parte del manifiesto ni de su huella.
+
+Incremento 7 añade mtime_ns opcional a cada registro observado al indexar. No cambia
+la identidad ni el hash; permite avisar de modificaciones por metadatos sin releer
+contenido desde el inspector. Un manifiesto anterior sigue siendo válido, con estado
+de disco unknown hasta reindexar si los demás metadatos siguen iguales.
+
+
+Incremento 8 — creación nativa exclusiva
+
+`new ESPACIO "Título o ruta relativa.md"` crea solo Markdown nuevo. Si falta .md,
+se añade; el título es el nombre final sin esa extensión. Los padres deben existir.
+Se rechazan rutas absolutas, .., componentes ocultos y caracteres de control.
+El frontmatter escrito es YAML compatible con escalares entre comillas JSON
+(Unicode, comillas y dos puntos escapados sin depender de un parser YAML):
+
+```yaml
+---
+id: 83094492-4130-47c3-8d34-4affcc48e155
+title: "Mi primera nota"
+---
+
+# Mi primera nota
+```
+
+Se genera UUIDv4; nunca se inyecta un ID en un archivo importado. El encabezado
+Markdown replica el título para el parser actual, que sigue sin ser YAML completo.
+El manifiesto v2 usa explicit_id=true, y el contrato ofrece
+identity_source=identity_origin=frontmatter. No cambian SQLite v4 ni grafo v3.
+
+Bajo un único flock EX se valida el estado previo sin publicarlo, se recorre el
+padre con descriptores O_DIRECTORY|O_NOFOLLOW, y se abre el destino con
+O_CREAT|O_EXCL|O_NOFOLLOW, modo 0600. Un archivo, directorio o symlink existente,
+incluso colgante, provoca error; nunca se trunca ni se sustituye. Tras escribir y
+sincronizar archivo/directorio, se prepara y publica el par índice/manifiesto con
+el protocolo pending ya documentado. No hay bloqueo anidado ni cambios a otras notas.
+La validación previa y la indexación posterior recorren el espacio con los límites
+habituales; crear una nota no es una actualización incremental del índice.
+
+El archivo nuevo y el estado derivado no forman una sola transacción. Si falla la
+escritura o indexación posterior, created=true/ok=false advierte que se conserva el
+archivo (posiblemente incompleto si falló la escritura); revisar su contenido y
+reintentar index. Nunca se borra una nota para ocultar un fallo. Una interrupción de
+publicación se recupera mediante pending; las identidades nativas se reconstruyen
+desde frontmatter. Las reglas de duplicados y resolución de IDs siguen vigentes.
+
+El inspector ahora compara SHA-256 cuando difieren los metadatos observados; touch
+sin cambio de bytes produce metadata_only y content_modified=false. No escribe
+los metadatos nuevos en el manifiesto: index explícito actualiza esa observación.

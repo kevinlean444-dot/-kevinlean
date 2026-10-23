@@ -1,3 +1,4 @@
+from contextlib import closing
 import json
 import sqlite3
 import uuid
@@ -88,7 +89,7 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(graph['deleted_documents'][0]['id'], identity)
         self.assertEqual(query(self.root, 'backlinks', identity), [])
         self.assertEqual(graph['links'][0]['status'], 'unresolved')
-        with sqlite3.connect(self.root / '.trama/index.sqlite') as db:
+        with closing(sqlite3.connect(self.root / '.trama/index.sqlite')) as db, db:
             self.assertEqual(db.execute('select deleted from docs where id=?', (identity,)).fetchone()[0], 1)
         self.note('restored.md', identity)
         index(self.root)

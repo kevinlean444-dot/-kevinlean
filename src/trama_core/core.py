@@ -1,5 +1,6 @@
 """Sin acceso a red ni ejecución de documentos; todas las rutas son locales."""
 import copy
+from bisect import bisect_right
 from contextlib import closing
 import hashlib
 import json
@@ -8,6 +9,7 @@ from pathlib import Path
 import re
 import sqlite3
 import stat
+from .locking import space_lock
 from urllib.parse import unquote, urlsplit
 import uuid
 
@@ -18,12 +20,16 @@ SCHEMA = """
 CREATE TABLE docs(id TEXT PRIMARY KEY, path TEXT, title TEXT, hash TEXT, kind TEXT, deleted INTEGER NOT NULL);
 CREATE VIRTUAL TABLE search USING fts5(id UNINDEXED, body, tokenize='unicode61 remove_diacritics 2');
 CREATE TABLE links(source TEXT, raw TEXT, target TEXT, status TEXT, candidates TEXT, needs_update INTEGER NOT NULL);
+CREATE INDEX links_target ON links(target);
+CREATE INDEX links_source ON links(source);
 CREATE TABLE errors(path TEXT, error TEXT);
 CREATE TABLE conflicts(details TEXT NOT NULL);
+CREATE TABLE link_locations(position INTEGER PRIMARY KEY, line INTEGER, context TEXT);
+CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
 
-def root_state(workspace, create=False):
+def root_state(workspace, create=False, *, check_files=True):
     root = Path(workspace).absolute()
     if root.is_symlink() or not root.is_dir() or root.resolve() != root:
         raise ValueError("El espacio debe ser un directorio real sin symlinks en su ruta")
@@ -32,12 +38,13 @@ def root_state(workspace, create=False):
         raise ValueError(".trama no puede ser un symlink")
     if create:
         state.mkdir(exist_ok=True)
-    for name in ("manifest.json", "index.sqlite", "index.sqlite-journal", "manifest.tmp", "manifest.next.json", "index.next.sqlite", "index.next.sqlite-journal", "pending", "pending.tmp"):
+    if not check_files:
+        return root, state
+    for name in ("manifest.json", "index.sqlite", "index.sqlite-journal", "manifest.tmp", "manifest.next.json", "index.next.sqlite", "index.next.sqlite-journal", "pending", "pending.tmp", ".lock"):
         p = state / name
         if p.exists() or p.is_symlink():
             if p.is_symlink() or not p.is_file() or p.stat().st_nlink != 1:
                 raise ValueError(f"Archivo de estado inseguro: {name}")
-    recover(state)
     return root, state
 
 
@@ -71,8 +78,13 @@ def metadata(text, fallback):
     return identity, heading.group(1).strip() if heading else fallback
 
 
-def index(workspace, relocate=None, *, _manifest=None, _prepare=False):
-    root, state = root_state(workspace, True)
+def index(workspace, relocate=None):
+    with space_lock(workspace, exclusive=True):
+        return _index(workspace, relocate=relocate)
+
+
+def _index(workspace, relocate=None, *, _manifest=None, _prepare=False):
+    root, state = root_state(workspace, create=not _prepare)
     manifest_path = state / "manifest.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {"version": 2, "documents": {}, "bindings": {}}
     if _manifest is not None:
@@ -119,7 +131,11 @@ def index(workspace, relocate=None, *, _manifest=None, _prepare=False):
             p = Path(base) / name
             rel = p.relative_to(root).as_posix()
             try:
+                before = p.stat(follow_symlinks=False)
                 data = read_document(p)
+                info = p.stat(follow_symlinks=False)
+                if any(getattr(before, key) != getattr(info, key) for key in ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns')) or info.st_size != len(data):
+                    raise ValueError('Archivo cambió durante indexación; vuelve a indexar cuando termine de guardarse')
                 kind = "note" if p.suffix.lower() in (".md", ".txt") else "attachment"
                 body = data.decode("utf-8") if kind == "note" else ""
                 explicit, title = metadata(body.replace("\r\n", "\n"), p.stem)
@@ -127,8 +143,7 @@ def index(workspace, relocate=None, *, _manifest=None, _prepare=False):
                 identity = str(uuid.UUID(identity))
                 if identity in seen:
                     raise ValueError("UUID duplicado: conflicto, archivo excluido")
-                info = p.stat(follow_symlinks=False)
-                observations[rel] = dict(size=len(data), device=info.st_dev, inode=info.st_ino)
+                observations[rel] = dict(size=len(data), device=info.st_dev, inode=info.st_ino, mtime_ns=info.st_mtime_ns)
                 if explicit:
                     explicit_ids.add(identity)
                 seen.add(identity)
@@ -194,9 +209,19 @@ def index(workspace, relocate=None, *, _manifest=None, _prepare=False):
     for identity, path, title, digest, kind in docs:
         titles.setdefault(title.casefold(), []).append(identity)
     links = []
+    locations = []
     new_bindings = {}
     for identity, path, *_ in docs:
-        for match in LINK.finditer(bodies[identity]):
+        body = bodies[identity]
+        line_starts = [0] + [m.end() for m in re.finditer("\n", body)]
+        for match in LINK.finditer(body):
+            line = bisect_right(line_starts, match.start())
+            start = line_starts[line - 1]
+            end = line_starts[line] - 1 if line < len(line_starts) else len(body)
+            start = max(start, match.start() - 160)
+            end = min(end, match.end() + 160)
+            context = body[start:end].rstrip("\r")
+            locations.append((len(links), line, context[:500]))
             wiki, markdown = match.groups()
             raw = wiki if wiki is not None else markdown
             candidates = []
@@ -235,7 +260,7 @@ def index(workspace, relocate=None, *, _manifest=None, _prepare=False):
                 new_bindings[key] = previous
             links.append((identity, raw, candidates[0] if len(candidates) == 1 else None, status, json.dumps(candidates), int(needs_update)))
     manifest["bindings"] = new_bindings
-    prepared = dict(manifest=manifest, docs=docs, bodies=bodies, links=links, errors=errors, conflicts=conflicts)
+    prepared = dict(manifest=manifest, docs=docs, bodies=bodies, links=links, errors=errors, conflicts=conflicts, locations=locations)
     if _prepare:
         return prepared
     publish(state, prepared)
@@ -263,6 +288,10 @@ def sync_directory(path):
         os.close(fd)
 
 
+def manifest_digest(manifest):
+    return hashlib.sha256(json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
 def publish(state, prepared):
     manifest, docs, bodies, links, errors, conflicts = (prepared[k] for k in
         ("manifest", "docs", "bodies", "links", "errors", "conflicts"))
@@ -273,7 +302,7 @@ def publish(state, prepared):
     try:
         with closing(sqlite3.connect(state / "index.next.sqlite")) as db, db:
             db.execute("BEGIN IMMEDIATE")
-            for table in ("docs", "search", "links", "errors", "conflicts"):
+            for table in ("docs", "search", "links", "errors", "conflicts", "link_locations", "metadata"):
                 db.execute(f"DROP TABLE IF EXISTS {table}")
             for statement in SCHEMA.split(";"):
                 if statement.strip():
@@ -282,7 +311,9 @@ def publish(state, prepared):
             db.executemany("INSERT INTO docs VALUES (?,?,?,?,?,?)", [
                 (i, r["rel_path"], r.get("title", ""), r.get("content_hash"), r.get("kind", "note"), 1)
                 for i, r in records.items() if r.get("deleted") and i not in seen])
-            db.execute("PRAGMA user_version=3")
+            db.execute("PRAGMA user_version=4")
+            db.executemany("INSERT INTO link_locations VALUES (?,?,?)", prepared['locations'])
+            db.execute("INSERT INTO metadata VALUES (?,?)", ("manifest_digest", manifest_digest(manifest)))
             db.executemany("INSERT INTO search VALUES (?,?)", bodies.items())
             db.executemany("INSERT INTO links VALUES (?,?,?,?,?,?)", links)
             db.executemany("INSERT INTO errors VALUES (?,?)", errors)
@@ -308,6 +339,11 @@ def publish(state, prepared):
 
 
 def query(workspace, command, value=None):
+    with space_lock(workspace):
+        return _query(workspace, command, value)
+
+
+def _query(workspace, command, value=None):
     _, state = root_state(workspace)
     if not (state / "index.sqlite").is_file():
         raise ValueError("Primero ejecuta index")

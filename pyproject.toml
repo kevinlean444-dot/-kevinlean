@@ -14,3 +14,6 @@ trama = "trama_core.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"trama_core.ui" = ["style.css"]
