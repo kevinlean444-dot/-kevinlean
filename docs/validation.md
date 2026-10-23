@@ -250,3 +250,53 @@ el entorno GTK 4.18 marca obsoleto; no se suprimieron advertencias. No se midier
 RSS/CPU ni se probó un editor gráfico real. La creación y publicación del índice
 no son una transacción conjunta con el documento: ante fallo se conserva el nuevo
 archivo y se informa de la recuperación, como se detalla en data-format.md.
+
+
+Incremento 9 — cola de salud y sugerencias sin reescritura
+
+Seis pruebas nuevas en test_health.py, manteniendo las 61 anteriores:
+
+- Tras un renombre ambiguo y resolve --apply, needs_update contiene exactamente el
+  enlace histórico afectado, su fuente/línea y reemplazo Markdown hacia la ruta
+  actual, manteniendo el UUID histórico y los bytes de todos los archivos.
+- Renombre/edición confirmados: wiki propone el título nuevo único; Markdown
+  conserva etiqueta y fragmento, y escapa espacios. Si el título actual se duplica,
+  la sugerencia usa una ruta Markdown explícita en lugar de introducir ambigüedad.
+- Filtros broken/ambiguous/all: ocurrencias repetidas y líneas exactas, rutas/UUID de
+  candidatas ordenados y sugerencias explícitas por candidata; orden determinista,
+  validación de filtro/límites y comparación de todo el espacio antes/después.
+- Conflicto pendiente: se inspecciona el UUID histórico con sus dos candidatas
+  reales; la navegación no resuelve nada ni altera el manifiesto.
+- Colección de 125 enlaces rotos: páginas 50/50/25, totales exactos y keys sin
+  repetirse dentro de la generación. Controlador con flechas, Enter, páginas,
+  recarga que ajusta offsets y retorno a cero al desaparecer problemas. CLI
+  ui-query health, snapshot con --filter y fallback TUI usan la misma respuesta.
+- GTK real bajo Xvfb: Ctrl+H, selector broken, flechas/Enter, detalle seleccionable
+  con línea, páginas 50/50/25, Ctrl+O dry-run y Ctrl+F para volver. También se prueba
+  el arranque CLI GTK --health --filter broken --smoke-test con selección real de
+  un botón. Se exige stderr vacío con advertencias GTK/Python fatales y archivo
+  fuente idéntico byte a byte.
+
+Comando real, desde /workspace/-kevinlean:
+
+```bash
+. scripts/gtk-env.sh
+xvfb-run -a dbus-run-session -- env GTK_A11Y=none GSK_RENDERER=cairo G_DEBUG=fatal-warnings PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -v > docs/test-output.txt 2>&1
+```
+
+Salida final:
+
+```text
+----------------------------------------------------------------------
+Ran 67 tests in 5.520s
+
+OK
+```
+
+Sin pruebas omitidas. El log completo está en test-output.txt. No se instalaron
+paquetes ni se hicieron benchmarks de RSS/CPU. La verificación de límites cubre
+objetos/widgets por página; las candidatas de cada ambigüedad se muestran completas.
+Las sugerencias y líneas proceden del último índice, no del archivo abierto en el
+editor; no se garantiza actualizar sus posiciones tras una edición externa sin
+reindexar. No se ejecutó un editor gráfico real ni se reescribió ninguna nota para
+corregir vínculos.

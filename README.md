@@ -136,3 +136,13 @@ PYTHONPATH=src .venv/bin/python -m trama_core new .demo/espacio 'Mi primera nota
 
 En GTK: Ctrl+N, escribir el título y Enter. Se asigna UUID en frontmatter y se indexa
 inmediatamente. Para notas importadas, la identidad continúa solo en el manifiesto.
+
+Cola de mantenimiento, sin corregir archivos automáticamente:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m trama_core ui-query .demo/espacio health --filter needs_update
+PYTHONPATH=src .venv/bin/python -m trama_core ui .demo/espacio --backend snapshot --filter broken
+```
+
+En GTK: Ctrl+H abre salud y recorre filtros; flechas/Enter seleccionan un problema.
+El inspector muestra la línea y sugerencias copiables. Ctrl+F vuelve a búsqueda.

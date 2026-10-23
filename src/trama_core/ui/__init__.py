@@ -21,7 +21,57 @@ class Presenter:
                           status=None, search=None, inspection=None, notice='', page_size=page_size, offset=0,
                           result_cursor=-1, link_cursors={'backlinks': -1, 'outgoing_links': -1},
                           focus='search', close_requested=False, link_page_size=link_page_size,
-                          link_offsets={'backlinks': 0, 'outgoing_links': 0}, external_action=None, index_action=None, creation_action=None)
+                          link_offsets={'backlinks': 0, 'outgoing_links': 0}, external_action=None, index_action=None, creation_action=None, health_view=False, health_filter='all',
+                          health_response=None, health_offset=0, health_cursor=-1, selected_issue=None)
+
+    def show_health(self, category='all', *, offset=0):
+        response = self.contract.health(self.workspace, category=category, limit=self.state['page_size'], offset=offset)
+        self.state.update(health_view=True, health_filter=category, health_offset=offset,
+                          health_response=response, health_cursor=-1, selected_issue=None, focus='results')
+        return response['ok']
+
+    def show_search(self):
+        self.state['health_view'] = False
+        self.state['health_response'] = None
+        self.state['selected_issue'] = None
+        self.set_focus('search')
+
+    def issues(self):
+        response = self.state['health_response']
+        return response['data']['items'] if response and response['ok'] else []
+
+    def select_issue(self, position):
+        rows = self.issues()
+        if type(position) is not int or not 0 <= position < len(rows):
+            return False
+        issue = rows[position]
+        if not self.select(issue['source']['uuid']):
+            return False
+        self.state.update(health_cursor=position, selected_issue=issue, focus='results')
+        return True
+
+    def move_issue(self, delta):
+        if not self.issues() or type(delta) is not int or delta == 0:
+            return False
+        total = self.state['health_response']['data']['total']
+        cursor = self.state['health_cursor']
+        if cursor < 0:
+            cursor = -1 if delta > 0 else len(self.issues())
+        absolute = max(0, min(total - 1, self.state['health_offset'] + cursor + delta))
+        offset = absolute // self.state['page_size'] * self.state['page_size']
+        if offset != self.state['health_offset']:
+            if offset > 1000000 or not self.show_health(self.state['health_filter'], offset=offset):
+                return False
+        return self.select_issue(absolute - offset)
+
+    def change_health_page(self, direction):
+        response = self.state['health_response']
+        if not response or not response['ok'] or direction not in (-1, 1):
+            return False
+        offset = response['data']['next_offset'] if direction == 1 else max(0, self.state['health_offset'] - self.state['page_size'])
+        if offset is None or offset == self.state['health_offset'] or offset > 1000000:
+            return False
+        return self.show_health(self.state['health_filter'], offset=offset)
 
     def snapshot(self):
         return copy.deepcopy(self.state)
@@ -42,6 +92,8 @@ class Presenter:
         return response['data']['results'] if response and response['ok'] else []
 
     def select_result(self, position):
+        if self.state['health_view']:
+            return self.select_issue(position)
         rows = self.results()
         if type(position) is not int or not 0 <= position < len(rows):
             return False
@@ -49,6 +101,8 @@ class Presenter:
         return self.select(rows[position]['uuid'])
 
     def move_result(self, delta):
+        if self.state['health_view']:
+            return self.move_issue(delta)
         rows = self.results()
         if not rows or type(delta) is not int or delta == 0:
             return False
@@ -63,6 +117,8 @@ class Presenter:
         return self.select_result(min(absolute - page, len(self.results()) - 1))
 
     def change_page(self, direction):
+        if self.state['health_view']:
+            return self.change_health_page(direction)
         response = self.state['search']
         if not response or not response['ok'] or direction not in (-1, 1):
             return False
@@ -124,13 +180,16 @@ class Presenter:
     def activate(self, group=None):
         group = group or self.state['focus']
         if group == 'results':
-            return self.select_result(max(0, self.state['result_cursor']))
+            return self.select_result(max(0, self.state['health_cursor'] if self.state['health_view'] else self.state['result_cursor']))
         if group in self.state['link_cursors']:
             return self.navigate(group, max(0, self.state['link_cursors'][group]))
         return False
 
     def escape(self, *, text=None, focus=None):
         self.state['close_requested'] = False
+        if self.state['health_view']:
+            self.show_search()
+            return
         if (self.state['query'] if text is None else text):
             self.search('')
             self.set_focus('search')
@@ -155,6 +214,7 @@ class Presenter:
                 response = self.contract.inspect_document(self.workspace, document, link_limit=self.state['link_page_size'],
                     backlinks_offset=offsets['backlinks'], outgoing_offset=offsets['outgoing_links'])
         self.state['inspection'] = response
+        self.state['selected_issue'] = None
         self.state['notice'] = ''
         if response['ok'] and response['data']['document'] is not None:
             identity = response['data']['document']['uuid']
@@ -213,6 +273,7 @@ class Presenter:
         result = create_note(self.workspace, name)
         self.state['creation_action'] = result
         if result['ok']:
+            self.show_search()
             self.refresh_status()
             self.search(result['title'])
             self.select(result['uuid'])
@@ -239,6 +300,11 @@ class Presenter:
             document = results[0]['uuid'] if results else None
         if document:
             self.select(document, remember=False)
+        if self.state['health_view']:
+            self.show_health(self.state['health_filter'], offset=self.state['health_offset'])
+            response = self.state['health_response']
+            if response['ok'] and self.state['health_offset'] >= response['data']['total'] and self.state['health_offset']:
+                self.show_health(self.state['health_filter'], offset=max(0, (response['data']['total'] - 1) // self.state['page_size'] * self.state['page_size']))
         return self.snapshot()
 
 
@@ -262,7 +328,7 @@ def link_text(link, direction):
 
 def notices(snapshot):
     result = []
-    for field in ('status', 'search', 'inspection'):
+    for field in ('status', 'search', 'inspection', 'health_response'):
         response = snapshot[field]
         if response and not response['ok']:
             text = f"{response['state']}: {response['error']['message']}"
@@ -293,3 +359,33 @@ def link_page_text(snapshot, section):
     last = page['offset'] + count if count else 0
     name = 'backlinks' if section == 'backlinks' else 'enlaces salientes'
     return f"Mostrando {first}–{last} de {page['total']} {name}"
+
+
+def issue_text(issue):
+    lines = [issue_caption(issue)]
+    if issue['current_link'] is not None:
+        lines.append('Actual: ' + issue['current_link'])
+    if issue['context']:
+        lines.append(issue['context'])
+    for suggestion in issue['suggestions']:
+        target = suggestion['target']
+        lines.append(f"Sugerencia → {target['rel_path']} · {target['uuid']}: " + suggestion['replacement'])
+    if issue['conflict']:
+        lines.append('Resolver identidad explícitamente con conflicts / resolve --preview')
+        lines.extend(f"Candidata: {r['rel_path']} · {r['uuid']}" for r in issue['candidates'])
+    return '\n'.join(lines)
+
+
+def health_page_text(snapshot):
+    response = snapshot['health_response']
+    if not response or not response['ok']:
+        return 'Salud no disponible'
+    data = response['data']
+    first = data['offset'] + 1 if data['items'] else 0
+    last = data['offset'] + len(data['items']) if data['items'] else 0
+    return f"Mostrando {first}–{last} de {data['total']} problemas · {data['category']}"
+
+
+def issue_caption(issue):
+    location = f" · Línea {issue['line']}" if issue['line'] is not None else ''
+    return f"{issue['category']} · {issue['source']['rel_path']}{location}"

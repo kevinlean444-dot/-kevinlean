@@ -391,3 +391,44 @@ Ctrl+R/F5 vuelve a consultar la nota: si difieren los metadatos, el contrato ver
 su hash con límite 2 MiB en el worker. metadata_only se presenta como información
 neutra; modified como advertencia; changing/too_large no afirman igualdad.
 No se garantiza detectar una edición que preserve todos los metadatos observados.
+
+
+## Incremento 9 · cola de mantenimiento
+
+El selector sobre la lista lateral permite elegir Búsqueda o una cola filtrada:
+all, needs_update, broken, ambiguous y conflicts. La barra global sigue mostrando
+los contadores; la cola lista ocurrencias concretas, paginadas según --page-size.
+Solo se instancian los botones de la página actual, por defecto 50.
+
+| Acción | Teclado / interacción |
+| --- | --- |
+| Abrir salud / recorrer filtros | Ctrl+H: all → needs_update → broken → ambiguous → conflicts → all |
+| Elegir filtro directamente | Selector lateral, accesible con teclado |
+| Recorrer problemas | Arriba/Abajo; al cruzar el borde se solicita la página siguiente/anterior |
+| Seleccionar problema | Enter o activar su botón; abre la fuente en el inspector |
+| Cambiar de página | AvPág/RePág o botones Página siguiente/anterior |
+| Volver a búsqueda | Ctrl+F, Escape o Búsqueda en el selector |
+| Abrir archivo afectado | Ctrl+O, con las validaciones habituales y sin shell |
+
+El inspector muestra un bloque de texto seleccionable con categoría, ruta, línea,
+enlace actual y cada sugerencia completa. Se puede copiar la sugerencia para pegarla
+en el editor externo. Las ambigüedades muestran rutas/UUID de cada candidata y nunca
+se decide por el usuario. Un conflicto abre la identidad histórica y muestra sus
+candidatas; si está eliminada, Abrir editor queda deshabilitado. Usar conflicts y
+resolve --preview para revisar esa decisión. No hay botón de aplicar reemplazos.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m trama_core ui-query .demo/espacio health --filter needs_update
+PYTHONPATH=src .venv/bin/python -m trama_core ui .demo/espacio --backend snapshot --filter broken --page-size 20
+PYTHONPATH=src .venv/bin/python -m trama_core ui .demo/espacio --backend gtk --health
+PYTHONPATH=src .venv/bin/python -m trama_core ui .demo/espacio --backend tui --filter ambiguous
+```
+
+En TUI: `/salud all`, `/salud needs_update`, `/problema 0`, `/abajo`, `/arriba`,
+`/siguiente`, `/anterior`, `/enter` y `/abrir-editor`. `/buscar TEXTO` vuelve a la
+búsqueda normal. Snapshot incluye la respuesta de salud paginada sin iniciar GTK.
+Ctrl+R/F5 recarga la cola conservando filtro/página cuando aún existe; reindexar
+(Ctrl+Shift+R) actualiza los problemas tras cambios externos. Los detalles de una
+ocurrencia se descartan al refrescar porque sus líneas pertenecen al último índice.
+La apertura del editor recibe la ruta segura; la línea se muestra para navegación
+manual, sin asumir que todos los editores soportan el mismo argumento de posición.

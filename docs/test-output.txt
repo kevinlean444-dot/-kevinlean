@@ -6,6 +6,12 @@ test_sql_and_fts_input_is_literal (test_core.CoreTests.test_sql_and_fts_input_is
 test_state_symlink_rejected (test_core.CoreTests.test_state_symlink_rejected) ... ok
 test_unreadable_external_symlink_and_escape (test_core.CoreTests.test_unreadable_external_symlink_and_escape) ... ok
 test_real_gtk_window_search_selection_and_widgets (test_gtk_window.GTKWindowTests.test_real_gtk_window_search_selection_and_widgets) ... ok
+test_real_gtk_health_filters_keyboard_pages_and_editor_dry_run (test_health.GTKHealthTests.test_real_gtk_health_filters_keyboard_pages_and_editor_dry_run) ... ok
+test_categories_exact_occurrences_candidates_determinism_and_immutability (test_health.HealthTests.test_categories_exact_occurrences_candidates_determinism_and_immutability) ... ok
+test_conflict_links_to_historical_uuid_and_real_candidates (test_health.HealthTests.test_conflict_links_to_historical_uuid_and_real_candidates) ... ok
+test_pagination_controller_navigation_refresh_and_cli_snapshot_tui (test_health.HealthTests.test_pagination_controller_navigation_refresh_and_cli_snapshot_tui) ... ok
+test_resolved_rename_suggests_exact_markdown_replacement (test_health.HealthTests.test_resolved_rename_suggests_exact_markdown_replacement) ... ok
+test_wiki_unique_rename_and_duplicate_title_use_safe_canonical_paths (test_health.HealthTests.test_wiki_unique_rename_and_duplicate_title_use_safe_canonical_paths) ... ok
 test_collision_controlled (test_identity.IdentityTests.test_collision_controlled) ... ok
 test_crlf_existing_id_and_invalid_id (test_identity.IdentityTests.test_crlf_existing_id_and_invalid_id) ... ok
 test_deletion_and_restore (test_identity.IdentityTests.test_deletion_and_restore) ... ok
@@ -61,6 +67,6 @@ test_search_selection_navigation_back_and_immutability (test_ui_presenter.Presen
 test_terminal_snapshot_and_tui_use_same_data (test_ui_presenter.PresenterTests.test_terminal_snapshot_and_tui_use_same_data) ... ok
 
 ----------------------------------------------------------------------
-Ran 61 tests in 4.289s
+Ran 67 tests in 5.520s
 
 OK

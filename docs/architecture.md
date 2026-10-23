@@ -2,8 +2,8 @@
 
 Estado construido: CLI Python sin dependencias de ejecución externas, SQLite FTS5.
 Arch x86_64 y Xfce siguen siendo objetivos futuros; no son requisitos del núcleo.
-GTK 4 se usa en la ventana opcional de solo lectura; Archiso sigue aplazado.
-No hay editor ni creador de notas.
+GTK 4 se usa en la ventana opcional; Archiso sigue aplazado.
+No hay editor integrado; new crea exclusivamente notas nativas nuevas.
 
 Los archivos alimentan documentos y texto FTS; los enlaces explícitos generan aristas.
 El manifiesto v2 mantiene registros y destinos de enlaces por UUID; SQLite contiene una vista derivada reemplazada
@@ -108,3 +108,12 @@ acción. Mantiene flock EX durante validación previa, creación O_EXCL sin syml
 y publicación recuperable. No modifica archivos existentes ni introduce editor.
 El inspector sigue siendo lector: solo si cambian metadatos verifica SHA-256 acotado
 en el worker, sin reindexar automáticamente. ui-contract.md define los nuevos campos.
+
+Incremento 9 añade health.py como proyección de lectura paginada sobre links,
+link_locations, search y conflicts existentes. No requiere migración ni dependencia.
+ui_contract.health conserva las garantías SH/solo lectura y valida filtro/límites.
+Las sugerencias reutilizan LINK sobre texto indexado, sin leer originales; ofrecen
+rutas explícitas cuando el título no identifica un destino único. El controlador
+reutiliza la lista lateral y su navegación/paginación para resultados o problemas;
+GTK muestra los detalles seleccionables en el inspector. Las correcciones siguen
+siendo decisiones manuales en el editor externo, fuera de Trama.

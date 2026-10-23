@@ -9,7 +9,7 @@ import sqlite3
 from .core import manifest_digest, read_document, MAX_BYTES
 from .locking import RecoveryNeeded, SpaceBusy, space_lock
 
-__all__ = ['search', 'inspect_document', 'status']
+__all__ = ['search', 'inspect_document', 'status', 'health']
 
 
 class ContractError(Exception):
@@ -213,3 +213,9 @@ def status(workspace):
         return dict(counts=counts, conflicts=sorted(manifest.get('conflicts', []), key=lambda c: (c['id'], c['old_path'])),
                     errors=[dict(r) for r in db.execute('SELECT * FROM errors ORDER BY path,error')])
     return _respond(workspace, 'status', perform)
+
+
+def health(workspace, *, category='all', limit=50, offset=0):
+    """Problemas y sugerencias del último índice, sin leer ni modificar documentos."""
+    from .health import read_health
+    return _respond(workspace, 'health', lambda db, manifest: read_health(db, manifest, category, limit, offset))

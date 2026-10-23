@@ -293,3 +293,73 @@ es otra acción; un fallo del editor no elimina una nota creada correctamente.
 Presenter.create_note(name) guarda creation_action en snapshot, actualiza el estado,
 busca el título y selecciona el UUID generado. Conserva el historial anterior.
 GTK ejecuta la creación en su worker; snapshot nunca escribe al arrancar.
+
+
+## Salud / cola de mantenimiento · incremento 9
+
+```python
+ui_contract.health(space, category='all', limit=50, offset=0)
+```
+
+```bash
+PYTHONPATH=src .venv/bin/python -m trama_core ui-query .demo/espacio health --filter needs_update --limit 50 --offset 0
+PYTHONPATH=src .venv/bin/python -m trama_core ui .demo/espacio --backend snapshot --health --filter ambiguous
+```
+
+Operación `health` en la envoltura v1, mismos errores/bloqueos SH y comprobación de
+coherencia que search/inspect. No cambia manifiesto v2 ni SQLite v4. Se consulta el
+último índice: health no abre documentos ni reindexa, ni calcula modificaciones de
+disco de todo el espacio. Los cambios externos se reflejan tras indexar explícitamente.
+
+Filtros: all, needs_update, broken, ambiguous, conflicts. limit entero 1..100
+(por defecto 50), offset 0..1_000_000. Argumentos inválidos: invalid_request.
+`data` tiene category, limit, offset, total, next_offset e items. Una página fuera
+del total devuelve items vacío y next_offset=null. El controlador corrige el offset
+si disminuye el total al refrescar. Los totales cuentan ocurrencias, no notas distintas.
+
+Categorías excluyentes por ocurrencia: needs_update si se conserva un destino
+histórico; ambiguous si hay varios candidatos; broken si status=unresolved.
+Conflicts corresponde a entradas activas de identidad. No incluye estados external,
+outside o invalid ni errores por archivo: estos siguen disponibles en status/inspect.
+Orden: categoría alfabética, ruta de fuente, detalle serializado de conflicto y
+posición de enlace/registro. SQL aplica filtro, orden y LIMIT/OFFSET antes de crear
+objetos Python. No se carga el grafo completo para obtener una página.
+
+Cada item tiene:
+
+| Campo | Significado |
+| --- | --- |
+| key | `link:posición` o `conflict:uuid:ruta_anterior`; válido en la generación consultada |
+| category | needs_update, broken, ambiguous o conflicts |
+| source | uuid, title, rel_path de la nota afectada; histórico para conflictos |
+| line | línea desde 1 del último índice; null para conflicto |
+| context | contexto indexado, hasta 500 caracteres; null para conflicto |
+| raw | destino tal como se indexó; null para conflicto |
+| current_link | sintaxis completa de la ocurrencia, incluidos etiqueta/corchetes; null para conflicto |
+| suggestions | array `{target: {uuid,title,rel_path}, destination, replacement}` |
+| candidates | candidatas ordenadas por rel_path/uuid, con uuid/title/rel_path |
+| conflict | `{id,old_path,candidates}` o null; candidates aquí son rutas del conflicto |
+
+En needs_update se propone el título actual como `[[Título]]` si es único y
+representable por el parser. Si no lo es, se propone `[nota](ruta%20relativa.md)`.
+Para Markdown se conservan etiqueta, indicador de imagen, query y fragmento; solo
+se sustituye el destino por la ruta relativa desde la fuente al documento canónico,
+con percent-encoding. En ambiguous se muestran todas las opciones sin elegir una:
+al compartir título, normalmente se sugieren destinos Markdown explícitos. Broken
+no tiene sugerencias inventadas. Conflicts orienta hacia conflicts/resolve --preview;
+no ofrece una resolución automática ni confunde candidatos con identidades confirmadas.
+
+La sintaxis exacta se recupera del texto ya indexado con el parser del núcleo;
+solo se retiene un texto fuente y un iterador de enlaces a la vez. Las listas de
+candidatas se conservan completas dentro de cada problema para poder elegir con
+información; el límite de página acota problemas, no el número de candidatas de
+un título extremadamente duplicado. No hay benchmarks de memoria/CPU.
+
+Presenter guarda health_view, health_filter, health_offset/cursor, health_response
+y selected_issue. show_health, select_issue, move_issue y change_health_page son
+acciones compartidas. La navegación de resultados delega a ellas en modo salud.
+Seleccionar muestra la fuente en el inspector con línea y sugerencias copiables;
+Ctrl+O abre su archivo sin imponer un protocolo de línea particular al editor.
+Las líneas y keys pueden cambiar tras reindexar: refresh retira la selección de
+problema para evitar mostrar instrucciones obsoletas y conserva el UUID inspeccionado.
+Ninguna sugerencia se aplica ni reescribe una nota.

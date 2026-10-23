@@ -47,6 +47,10 @@ def main():
     inspect_view.add_argument("--backlinks-offset", type=int, default=0)
     inspect_view.add_argument("--outgoing-offset", type=int, default=0)
     modes.add_parser("status")
+    health_view = modes.add_parser('health')
+    health_view.add_argument('--filter', choices=('all', 'needs_update', 'broken', 'ambiguous', 'conflicts'), default='all')
+    health_view.add_argument('--limit', type=int, default=50)
+    health_view.add_argument('--offset', type=int, default=0)
     ui = sub.add_parser("ui", help="Ventana GTK 4 o terminal; creación nativa explícita")
     ui.add_argument("workspace")
     ui.add_argument("--backend", choices=("auto", "gtk", "tui", "snapshot"), default="auto")
@@ -56,6 +60,8 @@ def main():
     ui.add_argument("--link-page-size", type=int, default=50)
     ui.add_argument("--editor", help="Comando externo, sin expansión de shell")
     ui.add_argument("--editor-dry-run", action="store_true")
+    ui.add_argument('--health', action='store_true', help='Mostrar cola de mantenimiento')
+    ui.add_argument('--filter', choices=('all', 'needs_update', 'broken', 'ambiguous', 'conflicts'))
     ui.add_argument("--smoke-test", action="store_true")
     args = parser.parse_args()
     try:
@@ -70,12 +76,14 @@ def main():
             return 0 if result['ok'] else 1
         if args.command == "ui":
             from .ui.launcher import run
-            return run(args.workspace, backend=args.backend, query=args.query, select=args.select, smoke_test=args.smoke_test, page_size=args.page_size, link_page_size=args.link_page_size, editor=args.editor, editor_dry_run=args.editor_dry_run)
+            return run(args.workspace, backend=args.backend, query=args.query, select=args.select, smoke_test=args.smoke_test, page_size=args.page_size, link_page_size=args.link_page_size, editor=args.editor, editor_dry_run=args.editor_dry_run, health_filter=(args.filter or 'all') if args.health or args.filter else None)
         if args.command == "ui-query":
             if args.view == "search":
                 result = ui_contract.search(args.workspace, args.text, limit=args.limit, offset=args.offset)
             elif args.view == "inspect":
                 result = ui_contract.inspect_document(args.workspace, args.document, link_limit=args.link_limit, backlinks_offset=args.backlinks_offset, outgoing_offset=args.outgoing_offset)
+            elif args.view == 'health':
+                result = ui_contract.health(args.workspace, category=args.filter, limit=args.limit, offset=args.offset)
             else:
                 result = ui_contract.status(args.workspace)
             print(json.dumps(result, ensure_ascii=False, indent=2))

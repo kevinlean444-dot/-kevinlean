@@ -8,7 +8,7 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Gdk', '4.0')
 from gi.repository import Gdk, Gio, GLib, Gtk
 
-from . import FOCUS_ORDER, Presenter, link_text, notices, status_text, page_text, link_page_text
+from . import FOCUS_ORDER, Presenter, link_text, notices, status_text, page_text, link_page_text, issue_text, health_page_text, issue_caption
 
 
 def available():
@@ -38,7 +38,7 @@ def scroller(child):
 
 
 class Window(Gtk.ApplicationWindow):
-    def __init__(self, application, workspace, query='', select=None, *, page_size=50, link_page_size=50, editor=None, editor_dry_run=False):
+    def __init__(self, application, workspace, query='', select=None, *, page_size=50, link_page_size=50, editor=None, editor_dry_run=False, health_filter=None):
         super().__init__(application=application, title='Trama · Lectura local')
         self.set_default_size(1120, 760)
         self.add_css_class('trama')
@@ -53,6 +53,7 @@ class Window(Gtk.ApplicationWindow):
         self.rendered_search = object()
         self.rendered_inspection = object()
         self.rendered_creation = None
+        self.syncing_view = False
         self.debounce = None
         self.snapshot = None
         self.worker_error = None
@@ -101,6 +102,18 @@ class Window(Gtk.ApplicationWindow):
         self.search_entry.set_text(query)
         self.search_entry.connect('search-changed', self.search_changed)
         left.append(self.search_entry)
+        self.view_filter = Gtk.DropDown.new_from_strings(['Búsqueda', 'all', 'needs_update', 'broken', 'ambiguous', 'conflicts'])
+        self.view_filter.set_tooltip_text('Cola de mantenimiento · Ctrl+H recorre filtros · Ctrl+F vuelve a búsqueda')
+        def change_view(widget, _):
+            if self.syncing_view:
+                return
+            selected = widget.get_selected()
+            if selected == 0:
+                self.submit('show_search')
+            else:
+                self.submit('show_health', ('all', 'needs_update', 'broken', 'ambiguous', 'conflicts')[selected - 1])
+        self.view_filter.connect('notify::selected', change_view)
+        left.append(self.view_filter)
         self.results_count = label('Buscando…', css='muted')
         left.append(self.results_count)
         self.results_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -125,6 +138,10 @@ class Window(Gtk.ApplicationWindow):
         self.metadata_label = label('Busca texto para explorar tus relaciones locales.', css='muted')
         right.append(self.title_label)
         right.append(self.metadata_label)
+        self.issue_details = label(css='warning')
+        self.issue_details.set_selectable(True)
+        self.issue_details.set_visible(False)
+        right.append(self.issue_details)
         notebook = Gtk.Notebook(vexpand=True)
         self.notebook = notebook
         self.backlinks_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -162,6 +179,8 @@ class Window(Gtk.ApplicationWindow):
         self.key_controller.connect('key-pressed', self.key_pressed)
         self.add_controller(self.key_controller)
         self.submit('refresh', query=query, select=select)
+        if health_filter is not None:
+            self.submit('show_health', health_filter)
 
     def show_new_note(self):
         if self.creation_dialog is not None:
@@ -278,7 +297,7 @@ class Window(Gtk.ApplicationWindow):
             if select_text:
                 self.search_entry.select_region(0, -1)
         elif group == 'results':
-            position = max(0, state.get('result_cursor', 0))
+            position = max(0, state.get('health_cursor', -1) if state.get('health_view') else state.get('result_cursor', 0))
             target = self.result_buttons[min(position, len(self.result_buttons) - 1)] if self.result_buttons else self.results_box
             target.grab_focus()
         elif group in ('backlinks', 'outgoing_links', 'health'):
@@ -300,6 +319,13 @@ class Window(Gtk.ApplicationWindow):
         if keyval == Gdk.KEY_F5 or (control and keyval in (Gdk.KEY_r, Gdk.KEY_R)):
             self.submit('reindex' if control and shift and keyval in (Gdk.KEY_r, Gdk.KEY_R) else 'refresh')
             return True
+        if control and keyval in (Gdk.KEY_h, Gdk.KEY_H):
+            categories = ('all', 'needs_update', 'broken', 'ambiguous', 'conflicts')
+            state = self.snapshot or {}
+            category = categories[(categories.index(state.get('health_filter', 'all')) + 1) % len(categories)] if state.get('health_view') else 'all'
+            self.focus_after_update = 'results'
+            self.submit('show_health', category)
+            return True
         if control and keyval in (Gdk.KEY_n, Gdk.KEY_N):
             self.show_new_note()
             return True
@@ -307,6 +333,7 @@ class Window(Gtk.ApplicationWindow):
             self.submit('open_external')
             return True
         if (control and keyval in (Gdk.KEY_f, Gdk.KEY_F)) or (keyval == Gdk.KEY_slash and not editing):
+            self.submit('show_search')
             self.focus_panel('search', select_text=True)
             self.submit('set_focus', 'search')
             return True
@@ -367,6 +394,7 @@ class Window(Gtk.ApplicationWindow):
         text = entry.get_text()
         def search():
             self.debounce = None
+            self.submit('show_search')
             self.submit('search', text)
             return GLib.SOURCE_REMOVE
         self.debounce = GLib.timeout_add(200, search)
@@ -390,14 +418,21 @@ class Window(Gtk.ApplicationWindow):
         previous_focus = self.get_focus()
         group = self.focus_after_update or self.focus_group()
         self.focus_after_update = None
-        if snapshot['search'] != self.rendered_search:
-            self.rendered_search = snapshot['search']
+        view = (snapshot['health_view'], snapshot['health_response'] if snapshot['health_view'] else snapshot['search'])
+        if view != self.rendered_search:
+            self.rendered_search = view
             self.render_results(snapshot)
         if snapshot['inspection'] != self.rendered_inspection:
             self.rendered_inspection = snapshot['inspection']
             self.render_inspector(snapshot)
+        issue = snapshot['selected_issue']
+        self.issue_details.set_text(issue_text(issue) if issue else '')
+        self.issue_details.set_visible(issue is not None)
+        self.syncing_view = True
+        self.view_filter.set_selected(1 + ('all', 'needs_update', 'broken', 'ambiguous', 'conflicts').index(snapshot['health_filter']) if snapshot['health_view'] else 0)
+        self.syncing_view = False
         for i, button in enumerate(self.result_buttons):
-            if i == snapshot['result_cursor']:
+            if i == (snapshot['health_cursor'] if snapshot['health_view'] else snapshot['result_cursor']):
                 button.add_css_class('selected-result')
             else:
                 button.remove_css_class('selected-result')
@@ -411,6 +446,19 @@ class Window(Gtk.ApplicationWindow):
     def render_results(self, snapshot):
         clear(self.results_box)
         self.result_buttons, self.result_labels = [], []
+        if snapshot['health_view']:
+            response = snapshot['health_response']
+            self.results_count.set_text(health_page_text(snapshot))
+            self.previous_page.set_sensitive(bool(response and response['ok'] and response['data']['offset'] > 0))
+            self.next_page.set_sensitive(bool(response and response['ok'] and response['data']['next_offset'] is not None and response['data']['next_offset'] <= 1000000))
+            for i, issue in enumerate(response['data']['items'] if response and response['ok'] else []):
+                text = label(issue_caption(issue))
+                button = Gtk.Button(child=text)
+                button.connect('clicked', lambda _, position=i: self.submit('select_issue', position))
+                self.results_box.append(button)
+                self.result_buttons.append(button)
+                self.result_labels.append(text)
+            return
         response = snapshot['search']
         if response and response['ok']:
             self.results_count.set_text(page_text(snapshot))
@@ -516,13 +564,13 @@ class Window(Gtk.ApplicationWindow):
         return False
 
 
-def run(workspace, query='', select=None, *, smoke_test=False, page_size=50, link_page_size=50, editor=None, editor_dry_run=False):
+def run(workspace, query='', select=None, *, smoke_test=False, page_size=50, link_page_size=50, editor=None, editor_dry_run=False, health_filter=None):
     if not available():
         raise RuntimeError('GTK 4 no tiene un display disponible; usa --backend snapshot o Xvfb')
     app = Gtk.Application(application_id='io.trama.Reader', flags=Gio.ApplicationFlags.NON_UNIQUE)
     result = dict(report=None, error=None)
     def activate(application):
-        window = Window(application, workspace, query, select, page_size=page_size, link_page_size=link_page_size, editor=editor, editor_dry_run=editor_dry_run)
+        window = Window(application, workspace, query, select, page_size=page_size, link_page_size=link_page_size, editor=editor, editor_dry_run=editor_dry_run, health_filter=health_filter)
         window.present()
         if not smoke_test:
             return
@@ -540,10 +588,13 @@ def run(workspace, query='', select=None, *, smoke_test=False, page_size=50, lin
                 state = window.snapshot
                 if not state['status']['ok'] or not state['search']['ok']:
                     raise RuntimeError('El contrato no está listo: ' + '; '.join(notices(state)))
-                rows = state['search']['data']['results']
+                if state['health_view'] and not state['health_response']['ok']:
+                    raise RuntimeError('La cola de salud no está disponible')
+                rows = state['health_response']['data']['items'] if state['health_view'] else state['search']['data']['results']
+                documents = [r['source'] for r in rows] if state['health_view'] else rows
                 if not selected_from_widget:
-                    chosen = next((i for i, row in enumerate(rows) if select in (row['uuid'], row['rel_path'])), 0)
-                    if rows and (not select or select in (rows[chosen]['uuid'], rows[chosen]['rel_path'])):
+                    chosen = next((i for i, row in enumerate(documents) if select in (row['uuid'], row['rel_path'])), 0)
+                    if rows and (not select or select in (documents[chosen]['uuid'], documents[chosen]['rel_path'])):
                         window.result_buttons[chosen].emit('clicked')
                         selected_from_widget = True
                         return GLib.SOURCE_CONTINUE
@@ -556,7 +607,7 @@ def run(workspace, query='', select=None, *, smoke_test=False, page_size=50, lin
                 assert doc['uuid'] in window.metadata_label.get_text(), 'UUID no renderizado'
                 assert window.title_label.get_root() == window and window.title_label.get_mapped(), 'Ventana no visible'
                 assert str(state['status']['data']['counts']['notes']) + ' notas' in window.status_label.get_text(), 'Estado no renderizado'
-                assert [w.get_text() for w in window.result_labels] == [d['title'] for d in rows], 'Resultados no renderizados'
+                assert [w.get_text() for w in window.result_labels] == ([issue_caption(r) for r in rows] if state['health_view'] else [d['title'] for d in rows]), 'Resultados no renderizados'
                 assert [w.get_text() for w in window.backlink_labels] == [link_text(e, 'backlinks') for e in data['backlinks']], 'Backlinks no renderizados'
                 assert [w.get_text() for w in window.outgoing_labels] == [link_text(e, 'outgoing_links') for e in data['outgoing_links']], 'Salientes no renderizados'
                 result['report'] = dict(backend='gtk', gtk_version=[Gtk.get_major_version(), Gtk.get_minor_version(), Gtk.get_micro_version()],

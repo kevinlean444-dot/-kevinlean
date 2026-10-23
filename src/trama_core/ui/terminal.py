@@ -2,7 +2,7 @@
 import json
 import sys
 
-from . import Presenter, link_text, notices, status_text, page_text, link_page_text
+from . import Presenter, link_text, notices, status_text, page_text, link_page_text, issue_text, health_page_text
 
 
 def plain(text):
@@ -12,7 +12,12 @@ def plain(text):
 def render(snapshot):
     lines = ['Trama · solo lectura', status_text(snapshot['status']), *notices(snapshot)]
     search = snapshot['search']
-    if search and search['ok']:
+    if snapshot['health_view']:
+        lines.append(health_page_text(snapshot))
+        response = snapshot['health_response']
+        if response and response['ok']:
+            lines.extend(f"  {n}: {issue_text(issue)}" for n, issue in enumerate(response['data']['items']))
+    elif search and search['ok']:
         lines.append(f"Búsqueda: {snapshot['query']} · {page_text(snapshot)}")
         for n, row in enumerate(search['data']['results']):
             lines.append(f"  {n}: {row['title']} · {row['rel_path']} · {row['uuid']}\n{row['snippet']}")
@@ -29,19 +34,23 @@ def render(snapshot):
             lines.append('Disco: ' + data['disk_state']['state'])
         lines += [f"Aviso: {error['path']}: {error['error']}" for error in data['health']['errors']]
         lines += [f"Conflicto: {c['old_path']} → {', '.join(c['candidates'])}" for c in data['health']['conflicts']]
+    if snapshot['selected_issue']:
+        lines.append('Problema seleccionado:\n' + issue_text(snapshot['selected_issue']))
     return plain('\n'.join(lines))
 
 
-def run(workspace, query='', select=None, *, snapshot=False, page_size=50, link_page_size=50, editor=None, editor_dry_run=False):
+def run(workspace, query='', select=None, *, snapshot=False, page_size=50, link_page_size=50, editor=None, editor_dry_run=False, health_filter=None):
     controller = Presenter(workspace, page_size=page_size, link_page_size=link_page_size, editor=editor, editor_dry_run=editor_dry_run)
     controller.refresh(query=query, select=select)
+    if health_filter is not None:
+        controller.show_health(health_filter)
     if snapshot:
         print(json.dumps(controller.snapshot(), ensure_ascii=False, indent=2))
-        return 0 if all(r is None or r['ok'] for r in (controller.state[k] for k in ('status', 'search', 'inspection'))) else 1
+        return 0 if all(r is None or r['ok'] for r in (controller.state[k] for k in ('status', 'search', 'inspection', 'health_response'))) else 1
     print(render(controller.snapshot()))
     if not sys.stdin.isatty():
-        return 0 if all(r is None or r['ok'] for r in (controller.state[k] for k in ('status', 'search', 'inspection'))) else 1
-    print('/buscar TEXTO · /abrir UUID|RUTA · /resultado N · /entrada N · /salida N · /atras · /siguiente · /anterior · /abajo · /arriba · /foco PANEL · /tab · /shift-tab · /enlace-abajo · /enlace-arriba · /enter · /escape · /enlaces-siguiente · /enlaces-anterior · /nueva TÍTULO|RUTA · /reindexar · /abrir-editor · /estado · /salir')
+        return 0 if all(r is None or r['ok'] for r in (controller.state[k] for k in ('status', 'search', 'inspection', 'health_response'))) else 1
+    print('/salud CATEGORÍA · /problema N · /buscar TEXTO · /abrir UUID|RUTA · /resultado N · /entrada N · /salida N · /atras · /siguiente · /anterior · /abajo · /arriba · /foco PANEL · /tab · /shift-tab · /enlace-abajo · /enlace-arriba · /enter · /escape · /enlaces-siguiente · /enlaces-anterior · /nueva TÍTULO|RUTA · /reindexar · /abrir-editor · /estado · /salir')
     while True:
         try:
             text = input('trama> ').strip()
@@ -52,7 +61,12 @@ def run(workspace, query='', select=None, *, snapshot=False, page_size=50, link_
         try:
             if command == '/salir':
                 break
+            elif command == '/salud':
+                controller.show_health(argument or 'all')
+            elif command == '/problema':
+                controller.select_issue(int(argument))
             elif command == '/buscar':
+                controller.show_search()
                 controller.search(argument)
             elif command == '/abrir':
                 controller.select(argument)
